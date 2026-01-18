@@ -424,9 +424,6 @@ class YoutubeDownload(BaseDownloader):
                 #     "youtube": [f"po_token=web.player+{potoken}", f"po_token=web.gvs+{potoken}"]
                 # }
 
-        if self._url.startswith("https://drive.google.com"):
-            # Always use the `source` format for Google Drive URLs.
-            formats = ["source"] + formats
 
         files = None
         extraction_error_encountered = False

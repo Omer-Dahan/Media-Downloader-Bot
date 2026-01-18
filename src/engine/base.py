@@ -792,12 +792,13 @@ class BaseDownloader(ABC):
             # Record usage BEFORE success message (which is now in _start->_upload)
             # But since _start calls _upload, we need to record after and update message separately
             self._remaining_credits = self._record_usage(file_sizes)
-            # Update the success message with remaining credits
-            try:
-                remaining_text = f" | קרדיטים נותרים: {self._remaining_credits}"
-                self._bot_msg.edit_text(f"✅ הושלם בהצלחה{remaining_text}")
-            except Exception:
-                pass  # Ignore edit errors
+            # Only update success message if files were actually downloaded
+            if file_sizes:
+                try:
+                    remaining_text = f" | קרדיטים נותרים: {self._remaining_credits}"
+                    self._bot_msg.edit_text(f"✅ הושלם בהצלחה{remaining_text}")
+                except Exception:
+                    pass  # Ignore edit errors
         
         # Send temporary notification with remaining credits (auto-delete after 5 seconds)
         if self._remaining_credits is not None:

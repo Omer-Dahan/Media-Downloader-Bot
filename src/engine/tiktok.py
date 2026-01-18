@@ -394,8 +394,15 @@ class TikTokDownload(BaseDownloader):
                 except Exception as e:
                     logging.warning("TikTok: Failed to send audio: %s", e)
             
-            # Mark as complete
-            self._bot_msg.edit_text("✅ הושלם בהצלחה")
+            # Only mark as complete and deduct credits if upload succeeded
+            if success:
+                # Calculate file sizes for credit deduction
+                file_sizes = [Path(f).stat().st_size for f in downloaded_files if Path(f).exists()]
+                self._remaining_credits = self._record_usage(file_sizes)
+                remaining_text = f" | קרדיטים נותרים: {self._remaining_credits}" if self._remaining_credits else ""
+                self._bot_msg.edit_text(f"✅ הושלם בהצלחה{remaining_text}")
+            else:
+                self._bot_msg.edit_text("❌ שליחת התמונות נכשלה")
         
         else:
             # Regular video upload

@@ -8,6 +8,16 @@ from engine.instagram import InstagramDownload
 from engine.krakenfiles import krakenfiles_download
 from engine.reddit import RedditDownload
 from engine.tiktok import TikTokDownload
+from engine.googledrive import googledrive_download
+
+
+def googledrive_disabled(client: Any, bot_message: Any, url: str) -> None:
+    """Temporarily disabled Google Drive downloads."""
+    bot_message.edit_text(
+        "❌ **הורדה מ-Google Drive מושבתת זמנית**\n\n"
+        "אנחנו עובדים על תיקון הבעיה.\n"
+        "בינתיים, אפשר להוריד ידנית מהקישור."
+    )
 
 
 def youtube_entrance(client, bot_message, url):
@@ -67,6 +77,12 @@ DOWNLOADER_MAP: dict[str, Callable[[Any, Any, str], Any]] = {
     "redd.it": reddit_handler,
     "tiktok.com": tiktok_handler,
     "vt.tiktok.com": tiktok_handler,
+    # Google services (TEMPORARILY DISABLED)
+    "drive.google.com": googledrive_disabled,
+    "docs.google.com": googledrive_disabled,
+    "sheets.google.com": googledrive_disabled,
+    "slides.google.com": googledrive_disabled,
+    "photos.google.com": googledrive_disabled,
 }
 
 # Media extensions to detect direct download links
