@@ -256,15 +256,16 @@ class TorrentDownload(BaseDownloader):
             
             # Custom meta for torrents - send as document with torrent-style caption
             # Handle caption length limit (1024 chars)
+            import html
             safe_name = torrent_name.replace("*", "").replace("_", "").replace("`", "")
             
             caption_prefix = (
-                f"🧲 **{safe_name}**\n\n"
+                f"🧲 <b>{html.escape(safe_name)}</b>\n\n"
                 f"📦 גודל: {sizeof_fmt(total_size)}\n"
                 f"📁 קבצים: {len(upload_files)}\n\n"
-                f"**>🔗 מקור: "
+                f"<blockquote expandable>🔗 מקור: "
             )
-            caption_suffix = "**"
+            caption_suffix = "</blockquote>"
             
             # Calculate remaining space
             # Using 1000 instead of 1024 to be safe with emojis/unicode length differences

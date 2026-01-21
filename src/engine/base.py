@@ -56,6 +56,7 @@ def generate_input_media(file_paths: list, cap: str) -> list:
 
     # Attach caption to LAST file in playlist (not first)
     input_media[-1].caption = cap
+    input_media[-1].parse_mode = enums.ParseMode.HTML
     return input_media
 
 
@@ -320,6 +321,7 @@ class BaseDownloader(ABC):
                 file_arg_name: files[0],
                 "caption": caption,
                 "progress": self.upload_hook,
+                "parse_mode": enums.ParseMode.HTML,
                 **kwargs,
             }
             
@@ -396,10 +398,14 @@ class BaseDownloader(ABC):
             credits_line = f"\nקרדיטים נותרים: {self._remaining_credits} 💳"
         
         # Different caption for audio vs video
+        import html
+        esc_title = html.escape(title)
+        esc_url = html.escape(self._url)
+        
         if is_audio:
-            caption = f"🎵 {title}\n\n🔗 מקור:\n{self._url}\n⏱️ אורך: {duration_str}\n⬇️ הקובץ מוכן להורדה{credits_line}\nשמיעה מהנה 🎧✨"
+            caption = f"🎵 <b>{esc_title}</b>\n\n<blockquote expandable>🔗 מקור: {esc_url}</blockquote>\n⏱️ אורך: {duration_str}\n⬇️ הקובץ מוכן להורדה{credits_line}\nשמיעה מהנה 🎧✨"
         else:
-            caption = f"🎬 {title}\n\n🔗 מקור:\n{self._url}\n📐 רזולוציה: {width}x{height}\n⏱️ אורך: {duration_str}\n⬇️ הקובץ מוכן לצפייה והורדה{credits_line}\nצפייה מהנה 👀✨"
+            caption = f"🎬 <b>{esc_title}</b>\n\n<blockquote expandable>🔗 מקור: {esc_url}</blockquote>\n📐 רזולוציה: {width}x{height}\n⏱️ אורך: {duration_str}\n⬇️ הקובץ מוכן לצפייה והורדה{credits_line}\nצפייה מהנה 👀✨"
         
         return dict(height=height, width=width, duration=duration, thumb=thumb, caption=caption)
 
@@ -448,6 +454,7 @@ class BaseDownloader(ABC):
     def _forward_to_archive(self, success, files, skip_archive=False):
         """Forward success message to archive channel."""
         from database.model import get_user_stats
+        import html
         
         if not ARCHIVE_CHANNEL or not success or skip_archive:
             return
@@ -477,10 +484,10 @@ class BaseDownloader(ABC):
             
             # Create archive caption
             archive_caption = (
-                f"👤 משתמש: {user_display}\n"
+                f"👤 משתמש: {html.escape(user_display)}\n"
                 f"🆔 {self._from_user}\n"
-                f"📁 קובץ: {filename}\n"
-                f"**>🔗 קישור: {self._url}**"
+                f"📁 קובץ: {html.escape(filename)}\n"
+                f"<blockquote expandable>🔗 קישור: {html.escape(self._url)}</blockquote>"
             )
             
             # Check for media group
@@ -518,7 +525,8 @@ class BaseDownloader(ABC):
                         chat_id=ARCHIVE_CHANNEL,
                         from_chat_id=self._chat_id,
                         message_id=msg.id,
-                        caption=final_caption
+                        caption=final_caption,
+                        parse_mode=enums.ParseMode.HTML
                     )
             else:
                 # Single file - copy message with new caption
@@ -526,7 +534,8 @@ class BaseDownloader(ABC):
                     chat_id=ARCHIVE_CHANNEL,
                     from_chat_id=self._chat_id,
                     message_id=msg_id,
-                    caption=archive_caption
+                    caption=archive_caption,
+                    parse_mode=enums.ParseMode.HTML
                 )
             
             logging.info("Forwarded to archive channel: %s", ARCHIVE_CHANNEL)
@@ -635,6 +644,7 @@ class BaseDownloader(ABC):
                     "caption": current_caption,
                     "supports_streaming": True,
                     "progress": self.upload_hook,
+                    "parse_mode": enums.ParseMode.HTML,
                 }
                 
                 # Add optional metadata if present
@@ -817,7 +827,8 @@ class BaseDownloader(ABC):
                         caption=part_caption,
                         thumb=meta.get("thumb"),
                         force_document=True,
-                        progress=self.upload_hook
+                        progress=self.upload_hook,
+                        parse_mode=enums.ParseMode.HTML
                     )
                     success.append(msg)
             else:
