@@ -299,7 +299,7 @@ class BaseDownloader(ABC):
         is_cache = kwargs.pop("cache", False)
         if len(files) > 1 and is_cache == False:
             inputs = generate_input_media(files, caption)
-            return self._client.send_media_group(chat_id, inputs)[0]
+            return self._client.send_media_group(chat_id, inputs)
         else:
             file_arg_name = None
             if _type == "photo":
@@ -461,8 +461,9 @@ class BaseDownloader(ABC):
 
         try:
             if isinstance(success, list):
-                msg_id = success[0].id if success else None
-                media_group_id = getattr(success[0], 'media_group_id', None) if success else None
+                if not success: return
+                msg_id = success[0].id
+                media_group_id = getattr(success[0], 'media_group_id', None)
             else:
                 msg_id = getattr(success, 'id', None)
                 media_group_id = getattr(success, 'media_group_id', None)
@@ -490,27 +491,47 @@ class BaseDownloader(ABC):
                 f"<blockquote expandable>🔗 קישור: {html.escape(self._url)}</blockquote>"
             )
             
-            # Check for media group
-            media_group_id = None
-            if isinstance(success, list) and success:
-                media_group_id = getattr(success[0], 'media_group_id', None)
-            elif not isinstance(success, list):
-                media_group_id = getattr(success, 'media_group_id', None)
-            
-            if media_group_id and len(files) > 1:
-                logging.info("Sending media group (%d files) to archive channel", len(files))
-                # generate_input_media assumed to be global/imported
-                archive_inputs = generate_input_media([str(f) for f in files], archive_caption)
-                self._client.send_media_group(chat_id=ARCHIVE_CHANNEL, media=archive_inputs)
-            
+            if media_group_id and isinstance(success, list):
+                logging.info("Sending media group (%d messages) to archive channel", len(success))
+                archive_inputs = []
+                for msg in success:
+                    # Extract file_id and type from the sent message
+                    if msg.photo:
+                        media = types.InputMediaPhoto(media=msg.photo.file_id)
+                    elif msg.video:
+                        media = types.InputMediaVideo(
+                            media=msg.video.file_id,
+                            duration=msg.video.duration,
+                            width=msg.video.width,
+                            height=msg.video.height,
+                            supports_streaming=True
+                        )
+                    elif msg.document:
+                        media = types.InputMediaDocument(media=msg.document.file_id)
+                    elif msg.audio:
+                        media = types.InputMediaAudio(
+                            media=msg.audio.file_id,
+                            duration=msg.audio.duration,
+                            performer=msg.audio.performer,
+                            title=msg.audio.title
+                        )
+                    else:
+                        continue
+                        
+                    archive_inputs.append(media)
+                
+                if archive_inputs:
+                    # Set caption on the last item
+                    archive_inputs[-1].caption = archive_caption
+                    archive_inputs[-1].parse_mode = enums.ParseMode.HTML
+                    self._client.send_media_group(chat_id=ARCHIVE_CHANNEL, media=archive_inputs)
+
             elif isinstance(success, list):
                 # List of separate messages (e.g. split archive parts) - copy each
                 logging.info("Copying %d split parts to archive channel", len(success))
                 for msg in success:
                     # Combine archive user info with the part's caption
                     part_caption = msg.caption or ""
-                    
-
                     
                     # Create minimal header
                     header = (
