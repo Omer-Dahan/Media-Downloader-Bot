@@ -295,7 +295,15 @@ class BaseDownloader(ABC):
         }
 
     def send_something(self, *, chat_id, files, _type, caption=None, thumb=None, **kwargs):
-        self._client.send_chat_action(chat_id, enums.ChatAction.UPLOAD_DOCUMENT)
+        action = enums.ChatAction.UPLOAD_DOCUMENT
+        if _type == "video":
+            action = enums.ChatAction.UPLOAD_VIDEO
+        elif _type == "audio":
+            action = enums.ChatAction.UPLOAD_AUDIO
+        elif _type == "photo":
+            action = enums.ChatAction.UPLOAD_PHOTO
+            
+        self._client.send_chat_action(chat_id, action)
         is_cache = kwargs.pop("cache", False)
         if len(files) > 1 and is_cache == False:
             inputs = generate_input_media(files, caption)

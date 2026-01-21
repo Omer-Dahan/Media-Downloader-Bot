@@ -284,19 +284,26 @@ class TorrentDownload(BaseDownloader):
             }
             
             # If single video file, try to extract metadata (thumb, duration)
-            if len(upload_files) == 1:
-                fpath = Path(upload_files[0])
-                if fpath.suffix.lower() in ['.mp4', '.mkv', '.avi', '.mov', '.webm']:
-                     try:
-                         vid_meta = self._extract_video_metadata(fpath)
-                         if vid_meta:
-                             torrent_meta.update(vid_meta)
-                             logging.info("Extracted metadata for torrent video: %s", {k: v for k, v in vid_meta.items() if k != 'thumb'})
-                     except Exception as e:
-                         logging.warning("Failed to extract torrent metadata: %s", e)
+            # Check for ANY supported video files (excluding MKV as requested)
+            supported_video_exts = {'.mp4', '.avi', '.mov', '.webm', '.flv', '.m4v'}
+            detected_videos = [f for f in upload_files if Path(f).suffix.lower() in supported_video_exts]
             
-            # Force document format for torrents
-            self._format = "document"
+            has_video = len(detected_videos) > 0
+            
+            if has_video:
+                # Find the largest video file for metadata extraction
+                try:
+                    largest_video = max(detected_videos, key=lambda p: Path(p).stat().st_size)
+                    vid_meta = self._extract_video_metadata(Path(largest_video))
+                    if vid_meta:
+                        torrent_meta.update(vid_meta)
+                        logging.info("Extracted metadata for largest torrent video: %s", {k: v for k, v in vid_meta.items() if k != 'thumb'})
+                except Exception as e:
+                    logging.warning("Failed to extract torrent metadata: %s", e)
+            
+            # Force document format ONLY if no supported videos found
+            if not has_video:
+                self._format = "document"
             
             # Upload using BaseDownloader's upload method
             self._upload(files=upload_files, meta=torrent_meta)
