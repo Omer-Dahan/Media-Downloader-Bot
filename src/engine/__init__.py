@@ -9,6 +9,7 @@ from engine.krakenfiles import krakenfiles_download
 from engine.reddit import RedditDownload
 from engine.tiktok import TikTokDownload
 from engine.googledrive import googledrive_download
+from engine.torrent import TorrentDownload
 
 
 def googledrive_disabled(client: Any, bot_message: Any, url: str) -> None:
@@ -67,6 +68,30 @@ def tiktok_handler(client: Any, bot_message: Any, url: str) -> None:
     """A wrapper to handle the TikTokDownload class."""
     downloader = TikTokDownload(client, bot_message, url)
     downloader.start()
+
+
+# --- Handler for Torrents ---
+def torrent_entrance(client: Any, bot_message: Any, source: str, torrent_file_path: str = None) -> None:
+    """Start torrent download from magnet link or .torrent file.
+    
+    Args:
+        client: Pyrogram client
+        bot_message: Bot message for updates
+        source: Magnet link (str) or identifier
+        torrent_file_path: Path to .torrent file if uploaded
+    """
+    from pathlib import Path
+    file_path = Path(torrent_file_path) if torrent_file_path else None
+    downloader = TorrentDownload(client, bot_message, source, file_path)
+    downloader.start()
+
+
+def is_magnet_link(text: str) -> bool:
+    """Check if text is a magnet link."""
+    import re
+    # Match magnet links with v1 (40 hex) or v2 (64 hex) hashes
+    pattern = r'^magnet:\?xt=urn:btih:[a-fA-F0-9]{40,64}'
+    return bool(re.match(pattern, text.strip()))
 
 
 DOWNLOADER_MAP: dict[str, Callable[[Any, Any, str], Any]] = {

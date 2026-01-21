@@ -26,6 +26,7 @@ from config import (
     OWNER,
     PROVIDER_TOKEN,
     TOKEN_PRICE,
+    TORRENT_MIN_CREDITS,
     BotText,
 )
 from database.model import (
@@ -43,7 +44,7 @@ from database.model import (
     CreditsExhaustedException,
     get_total_credits,
 )
-from engine import direct_entrance, youtube_entrance, youtube_entrance_with_quality, get_youtube_video_info, special_download_entrance
+from engine import direct_entrance, youtube_entrance, youtube_entrance_with_quality, get_youtube_video_info, special_download_entrance, torrent_entrance, is_magnet_link
 from engine.base import cancellation_events, _resume_state_cache
 from engine.generic import check_and_send_update_notification
 from utils import extract_url_and_name, sizeof_fmt, timeof_fmt, is_youtube
@@ -51,6 +52,9 @@ from admin import admin_panel_command, admin_callback_handler, admin_text_handle
 
 # Temporary storage for YouTube URLs (maps hash to URL)
 _youtube_url_cache: dict[str, str] = {}
+
+# Users waiting to provide torrent input (after /torrent command)
+_torrent_waiting_users: set[int] = set()
 
 logging.info("Authorized users are %s", AUTHORIZED_USER)
 logging.getLogger("apscheduler.executors.default").propagate = False
@@ -104,7 +108,7 @@ def report_error_to_archive(client: Client, user: types.User, url: str, error: E
             f"❌ <b>דיווח שגיאה</b>\n"
             f"👤 משתמש: {html.escape(user_display)}\n"
             f"🆔 {user.id}\n"
-            f"🔗 קישור: {html.escape(url)}\n"
+            f"<blockquote expandable>🔗 קישור: {html.escape(url)}</blockquote>\n"
             f"⚠️ שגיאה: {html.escape(str(error))}\n\n"
             f"<blockquote expandable>📋 לוג מפורט:\n<pre>{log_display}</pre></blockquote>"
         )
@@ -113,7 +117,7 @@ def report_error_to_archive(client: Client, user: types.User, url: str, error: E
             chat_id=ARCHIVE_CHANNEL,
             text=caption,
             parse_mode=enums.ParseMode.HTML,
-            disable_web_page_preview=True
+            link_preview_options=types.LinkPreviewOptions(is_disabled=True)
         )
         
         # Send full log as file if truncated
@@ -462,6 +466,42 @@ def ytdl_handler(client: Client, message: types.Message):
         return
 
 
+@app.on_message(filters.command(["torrent"]))
+@private_use
+def torrent_command_handler(client: Client, message: types.Message):
+    """Handle /torrent command - puts user in waiting state for magnet/file."""
+    chat_id = message.from_user.id
+    user = message.from_user
+    init_user(chat_id, first_name=user.first_name if user else None, username=user.username if user else None)
+    
+    # Check 500+ credits requirement
+    total_credits = get_total_credits(chat_id)
+    if total_credits < TORRENT_MIN_CREDITS:
+        message.reply_text(
+            f"⚡ **הורדת טורנטים זמינה למנויים פרימיום בלבד**\n\n"
+            f"נדרשים מינימום {TORRENT_MIN_CREDITS} קרדיטים.\n"
+            f"יש לך כרגע: {total_credits} קרדיטים.\n\n"
+            "💬 לרכישת קרדיטים, צור קשר:",
+            reply_markup=types.InlineKeyboardMarkup([
+                [types.InlineKeyboardButton("לרכישת קרדיטים 💬", url="https://t.me/YD_IL")]
+            ]),
+            quote=True
+        )
+        return
+    
+    # Put user in waiting state
+    _torrent_waiting_users.add(chat_id)
+    
+    message.reply_text(
+        "🧲 **מצב הורדת טורנט**\n\n"
+        "שלח לי כעת:\n"
+        "• **מגנט לינק** - הדבק את הקישור\n"
+        "• **קובץ .torrent** - העלה כקובץ\n\n"
+        "💡 לביטול, שלח כל הודעה אחרת או המתן.",
+        quote=True
+    )
+
+
 def check_link(url: str, uid: int = None):
     if re.findall(r"^https://(www\.)?youtube\.com/channel/", url) or "list" in url:
         # Playlist/channel allowed for all users with credits
@@ -504,6 +544,35 @@ def download_handler(client: Client, message: types.Message):
     
     # Extract URL from anywhere in the message
     if not text:
+        return
+    
+    # Check for magnet links - only if user sent /torrent first
+    if is_magnet_link(text):
+        if chat_id not in _torrent_waiting_users:
+            # Not in torrent mode - ignore magnet or hint about /torrent
+            message.reply_text(
+                "🧲 זיהיתי מגנט לינק!\n\n"
+                "להורדת טורנטים, שלח קודם את הפקודה /torrent",
+                quote=True
+            )
+            return
+        
+        # Remove from waiting state
+        _torrent_waiting_users.discard(chat_id)
+        
+        logging.info("Processing magnet link from user %s", chat_id)
+        
+        # Start torrent download
+        bot_msg = message.reply_text("🧲 מגנט לינק התקבל, מתחיל הורדת טורנט...", quote=True)
+        client.send_chat_action(chat_id, enums.ChatAction.UPLOAD_VIDEO)
+        
+        start_request_log(text, chat_id)
+        try:
+            torrent_entrance(client, bot_msg, text)
+        except ValueError as e:
+            report_error_to_archive(client, message.from_user, text, e)
+        finally:
+            end_request_log()
         return
     
     # Find URLs anywhere in the message text
@@ -614,6 +683,77 @@ def download_handler(client: Client, message: types.Message):
         )
     finally:
         end_request_log()
+
+
+@app.on_message(filters.document & filters.private)
+@private_use
+def torrent_file_handler(client: Client, message: types.Message):
+    """Handle .torrent file uploads (premium feature)."""
+    from engine.request_logger import start_request_log, end_request_log
+    import tempfile
+    
+    # Check if it's a .torrent file
+    document = message.document
+    if not document:
+        return
+    
+    file_name = document.file_name or ""
+    if not file_name.lower().endswith(".torrent"):
+        return  # Not a torrent file, ignore
+    
+    chat_id = message.from_user.id
+    user = message.from_user
+    init_user(chat_id, first_name=user.first_name if user else None, username=user.username if user else None)
+    
+    logging.info("Received .torrent file from user %s: %s", chat_id, file_name)
+    
+    # Check if user sent /torrent first
+    if chat_id not in _torrent_waiting_users:
+        message.reply_text(
+            "📁 זיהיתי קובץ טורנט!\n\n"
+            "להורדת טורנטים, שלח קודם את הפקודה /torrent",
+            quote=True
+        )
+        return
+    
+    # Remove from waiting state
+    _torrent_waiting_users.discard(chat_id)
+    
+    bot_msg = message.reply_text("📥 מוריד קובץ טורנט...", quote=True)
+    client.send_chat_action(chat_id, enums.ChatAction.UPLOAD_VIDEO)
+    
+    start_request_log(f"torrent:{file_name}", chat_id)
+    
+    try:
+        # Download the .torrent file
+        with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as tmp:
+            tmp_path = tmp.name
+        
+        message.download(tmp_path)
+        
+        bot_msg.edit_text("🧲 קובץ טורנט התקבל, מתחיל הורדה...")
+        
+        # Start torrent download
+        torrent_entrance(client, bot_msg, f"torrent:{file_name}", tmp_path)
+        
+    except ValueError as e:
+        report_error_to_archive(client, message.from_user, file_name, e)
+    except Exception as e:
+        report_error_to_archive(client, message.from_user, file_name, e)
+        logging.error("Torrent file handling failed", exc_info=True)
+        bot_msg.edit_text(
+            "❌ לא הצלחתי לעבד את קובץ הטורנט.\n"
+            "ודא שהקובץ תקין ונסה שוב."
+        )
+    finally:
+        end_request_log()
+        # Cleanup temp file
+        import os
+        try:
+            if 'tmp_path' in dir() and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except Exception:
+            pass
 
 
 def _build_settings_markup(chat_id):

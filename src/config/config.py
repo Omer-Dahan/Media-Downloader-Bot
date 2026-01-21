@@ -56,3 +56,17 @@ INSTAGRAM_SESSION_FILE = get_env("INSTAGRAM_SESSION_FILE")
 # Instagram cookies file for yt-dlp (Netscape format, export from browser)
 # Use browser extension like "Get cookies.txt LOCALLY" to export cookies
 INSTAGRAM_COOKIES_FILE = get_env("INSTAGRAM_COOKIES_FILE")
+
+# qBittorrent settings
+QBITTORRENT_HOST = get_env("QBITTORRENT_HOST", "localhost")
+QBITTORRENT_PORT = get_env("QBITTORRENT_PORT", 8080)
+QBITTORRENT_USERNAME = get_env("QBITTORRENT_USERNAME", "admin")
+QBITTORRENT_PASSWORD = get_env("QBITTORRENT_PASSWORD", "adminadmin")
+
+# Torrent feature settings
+TORRENT_MIN_CREDITS = get_env("TORRENT_MIN_CREDITS", 500)        # Gate requirement
+TORRENT_STALL_TIMEOUT = get_env("TORRENT_STALL_TIMEOUT", 600)    # 10 minutes
+TORRENT_GLOBAL_TIMEOUT = get_env("TORRENT_GLOBAL_TIMEOUT", 7200) # 2 hours
+TORRENT_MAX_PER_USER = get_env("TORRENT_MAX_PER_USER", 1)        # Active per user
+TORRENT_MAX_GLOBAL = get_env("TORRENT_MAX_GLOBAL", 5)            # Global cap
+

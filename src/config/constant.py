@@ -42,6 +42,7 @@ YouTube, Instagram, TikTok, Facebook, Twitter (X), SoundCloud, Reddit
 /stats: הצגת סטטיסטיקות שרת.
 /direct: הורדה ישירה מלינק.
 /spdl: הורדה מאתרים ספציפיים.
+/torrent: הורדת טורנטים (VIP).
 /ping: בדיקת מהירות תגובה.
 
 🔹 מה אפשר להוריד?

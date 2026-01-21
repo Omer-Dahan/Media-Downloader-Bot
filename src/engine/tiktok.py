@@ -3,6 +3,7 @@ import pathlib
 import subprocess
 import requests
 from typing import Optional, Tuple
+from pyrogram import types
 
 import yt_dlp
 
@@ -291,7 +292,7 @@ class TikTokDownload(BaseDownloader):
                 self._client.send_message(
                     chat_id=ARCHIVE_CHANNEL, 
                     text=report,
-                    disable_web_page_preview=True
+                    link_preview_options=types.LinkPreviewOptions(is_disabled=True)
                 )
             except Exception as e:
                 logging.warning("Failed to send error to archive: %s", e)

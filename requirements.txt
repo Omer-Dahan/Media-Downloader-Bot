@@ -22,3 +22,4 @@ yt-dlp-ejs==0.3.1
 instaloader>=4.11
 gallery-dl>=1.27.0
 gdown>=5.2.0
+qbittorrent-api>=2024.1.64

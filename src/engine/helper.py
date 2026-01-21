@@ -39,3 +39,47 @@ def sizeof_fmt(num: int, suffix="B"):
             return "%3.1f%s%s" % (num, unit, suffix)
         num /= 1024.0
     return "%.1f%s%s" % (num, "Yi", suffix)
+
+
+def moon_progress_bar(percent: float, total_cells: int = 10) -> str:
+    """
+    Build a moon phase progress bar (RTL - right to left).
+    
+    Uses waxing phases for RTL visual (progress fills from right):
+    🌑 empty → 🌒 quarter → 🌓 half → 🌔 three-quarter → 🌕 full
+    
+    Args:
+        percent: Progress percentage (0-100)
+        total_cells: Number of moon cells (default 10)
+        
+    Returns:
+        String of moon emojis representing progress (RTL)
+    """
+    progress = max(0, min(100, percent)) / 100
+    filled_cells = int(progress * total_cells)
+    remainder = (progress * total_cells) - filled_cells
+    
+    # Calculate partial moon (using waxing phases: 🌒🌓🌔)
+    partial_moon = ""
+    if filled_cells < total_cells and remainder > 0:
+        if remainder >= 0.67:
+            partial_moon = "🌔"
+            filled_cells += 1
+        elif remainder >= 0.34:
+            partial_moon = "🌓"
+            filled_cells += 1
+        else:
+            partial_moon = "🌒"
+            filled_cells += 1
+    
+    # RTL: full moons on right (start), partial in middle, empty on left (end)
+    empty_count = total_cells - filled_cells
+    
+    # Correction: filled_cells includes the partial one if present in the previous logic count?
+    # Logic above: if remainder, filled_cells += 1. So filled_cells includes the partial slot.
+    # We want: (filled_cells - 1) Full Moons + 1 Partial
+    # If no partial: filled_cells Full Moons.
+    
+    full_count = filled_cells - (1 if partial_moon else 0)
+    
+    return "🌕" * full_count + partial_moon + "🌑" * empty_count

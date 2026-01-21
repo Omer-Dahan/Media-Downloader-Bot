@@ -2,6 +2,7 @@ import logging
 import pathlib
 import re
 from typing import Optional
+from pyrogram import types
 
 import yt_dlp
 
@@ -234,7 +235,7 @@ class InstagramDownload(BaseDownloader):
                 self._client.send_message(
                     chat_id=ARCHIVE_CHANNEL,
                     text=report,
-                    disable_web_page_preview=True
+                    link_preview_options=types.LinkPreviewOptions(is_disabled=True)
                 )
             except Exception as e:
                 logging.warning("Failed to send error to archive: %s", e)

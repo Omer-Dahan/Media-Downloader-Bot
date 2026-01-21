@@ -45,11 +45,11 @@ def generate_input_media(file_paths: list, cap: str) -> list:
     input_media = []
     for path in file_paths:
         mime = filetype.guess_mime(path)
-        if "video" in mime:
+        if mime and "video" in mime:
             input_media.append(types.InputMediaVideo(media=path, supports_streaming=True))
-        elif "image" in mime:
+        elif mime and "image" in mime:
             input_media.append(types.InputMediaPhoto(media=path))
-        elif "audio" in mime:
+        elif mime and "audio" in mime:
             input_media.append(types.InputMediaAudio(media=path))
         else:
             input_media.append(types.InputMediaDocument(media=path))
@@ -125,10 +125,9 @@ class BaseDownloader(ABC):
         else:
             percent = 0
         
-        # Create circle-based progress bar (10 circles) - RTL order (empty first, filled last)
-        filled_circles = percent // 10  # Each circle = 10%
-        empty_circles = 10 - filled_circles
-        progress_bar = "⚪️" * empty_circles + "🟢" * filled_circles
+        # Build moon phase progress bar using shared function
+        from engine.helper import moon_progress_bar
+        progress_bar = moon_progress_bar(percent)
         
         # Format file size progress
         from engine.helper import sizeof_fmt
@@ -137,8 +136,7 @@ class BaseDownloader(ABC):
         # Modern RTL style progress display with circle bar
         text = f"""‏📥 **{desc}**
 ‏━━━━━━━━━━━━━━━━━━
-‏{percent}%
-‏{progress_bar}
+‏{progress_bar} {percent}%
 ‏📊 {size_progress}
 {more("‏⚡ מהירות:", speed)}
 {more("‏⏱️ זמן משוער:", eta)}
@@ -209,8 +207,19 @@ class BaseDownloader(ABC):
             cancellation_events.discard(key)
             raise ValueError("ההורדה בוטלה על ידי המשתמש 🛑")
 
-    @debounce(5)
     def edit_text(self, text: str):
+        # Rate limit to avoid "Waiting for..." spam from Pyrogram
+        import time
+        now = time.time()
+        
+        if not hasattr(self, '_last_edit_time'):
+            self._last_edit_time = 0
+            
+        if now - self._last_edit_time < 2:
+            return
+
+        self._last_edit_time = now
+
         # Add cancel button
         markup = types.InlineKeyboardMarkup(
             [[types.InlineKeyboardButton("❌ ביטול", callback_data=f"cancel:{self._chat_id}:{self._id}")]]
@@ -394,6 +403,137 @@ class BaseDownloader(ABC):
         
         return dict(height=height, width=width, duration=duration, thumb=thumb, caption=caption)
 
+    def _extract_video_metadata(self, video_path: Path):
+        """Extract metadata (duration, resolution, thumb) from video file."""
+        import ffmpeg
+        import uuid
+        
+        duration = 0
+        width = 0
+        height = 0
+        thumb = None
+        
+        try:
+            probe = ffmpeg.probe(str(video_path))
+            format_info = probe.get('format', {})
+            duration = float(format_info.get('duration', 0))
+            
+            # Get video stream info
+            streams = probe.get('streams', [])
+            video_stream = next((stream for stream in streams if stream['codec_type'] == 'video'), None)
+            if video_stream:
+                width = int(video_stream.get('width', 0))
+                height = int(video_stream.get('height', 0))
+                
+            # Generate thumbnail
+            thumb_path = video_path.parent.joinpath(f"{uuid.uuid4().hex}-thumbnail.png")
+            thumb = thumb_path.as_posix()
+            
+            (
+                ffmpeg
+                .input(str(video_path), ss=duration / 2)
+                .filter("scale", "if(gt(iw,ih),300,-1)", "if(gt(iw,ih),-1,300)")
+                .output(thumb, vframes=1)
+                .run(quiet=True, overwrite_output=True)
+            )
+            
+            if not thumb_path.exists() or thumb_path.stat().st_size < 100:
+                thumb = None
+                
+        except Exception as e:
+            logging.warning("Failed to extract video metadata: %s", e)
+            
+        return {"duration": duration, "width": width, "height": height, "thumb": thumb}
+
+    def _forward_to_archive(self, success, files, skip_archive=False):
+        """Forward success message to archive channel."""
+        from database.model import get_user_stats
+        
+        if not ARCHIVE_CHANNEL or not success or skip_archive:
+            return
+
+        try:
+            if isinstance(success, list):
+                msg_id = success[0].id if success else None
+                media_group_id = getattr(success[0], 'media_group_id', None) if success else None
+            else:
+                msg_id = getattr(success, 'id', None)
+                media_group_id = getattr(success, 'media_group_id', None)
+            
+            # Get user info
+            user_info = get_user_stats(self._from_user)
+            if user_info:
+                name = user_info.get('first_name') or ""
+                if user_info.get('username'):
+                    name = f"{name} @{user_info['username']}".strip()
+                user_display = name if name else str(self._from_user)
+            else:
+                user_display = str(self._from_user)
+            
+            # Get filename
+            filename = "Unknown"
+            if files and len(files) > 0:
+                filename = Path(files[0]).name
+            
+            # Create archive caption
+            archive_caption = (
+                f"👤 משתמש: {user_display}\n"
+                f"🆔 {self._from_user}\n"
+                f"📁 קובץ: {filename}\n"
+                f"**>🔗 קישור: {self._url}**"
+            )
+            
+            # Check for media group
+            media_group_id = None
+            if isinstance(success, list) and success:
+                media_group_id = getattr(success[0], 'media_group_id', None)
+            elif not isinstance(success, list):
+                media_group_id = getattr(success, 'media_group_id', None)
+            
+            if media_group_id and len(files) > 1:
+                logging.info("Sending media group (%d files) to archive channel", len(files))
+                # generate_input_media assumed to be global/imported
+                archive_inputs = generate_input_media([str(f) for f in files], archive_caption)
+                self._client.send_media_group(chat_id=ARCHIVE_CHANNEL, media=archive_inputs)
+            
+            elif isinstance(success, list):
+                # List of separate messages (e.g. split archive parts) - copy each
+                logging.info("Copying %d split parts to archive channel", len(success))
+                for msg in success:
+                    # Combine archive user info with the part's caption
+                    part_caption = msg.caption or ""
+                    
+
+                    
+                    # Create minimal header
+                    header = (
+                         f"👤 משתמש: {user_display}\n"
+                         f"🆔 {self._from_user}\n"
+                         f"**>🔗 קישור: {self._url}**"
+                    )
+                    
+                    final_caption = f"{header}\n{part_caption}"
+                    
+                    self._client.copy_message(
+                        chat_id=ARCHIVE_CHANNEL,
+                        from_chat_id=self._chat_id,
+                        message_id=msg.id,
+                        caption=final_caption
+                    )
+            else:
+                # Single file - copy message with new caption
+                self._client.copy_message(
+                    chat_id=ARCHIVE_CHANNEL,
+                    from_chat_id=self._chat_id,
+                    message_id=msg_id,
+                    caption=archive_caption
+                )
+            
+            logging.info("Forwarded to archive channel: %s", ARCHIVE_CHANNEL)
+            
+        except Exception as e:
+            logging.error("Failed to forward to archive channel: %s", e)
+
     def _split_video_if_needed(self, video_path: Path) -> list[Path]:
         """Split video into ~1.9GB parts if larger than Telegram limit.
         
@@ -488,17 +628,26 @@ class BaseDownloader(ABC):
                 current_caption = f"{part_label}\n\n{full_caption}"
             
             try:
-                msg = self._client.send_video(
-                    chat_id=self._chat_id,
-                    video=str(part_path),
-                    caption=current_caption,
-                    supports_streaming=True,
-                    progress=self.upload_hook,
-                    thumb=meta.get("thumb"),
-                    duration=meta.get("duration", 0) // num_parts,  # Approximate
-                    width=meta.get("width"),
-                    height=meta.get("height"),
-                )
+                # Build send_video args - only include thumb if not None
+                send_args = {
+                    "chat_id": self._chat_id,
+                    "video": str(part_path),
+                    "caption": current_caption,
+                    "supports_streaming": True,
+                    "progress": self.upload_hook,
+                }
+                
+                # Add optional metadata if present
+                if meta.get("thumb"):
+                    send_args["thumb"] = meta["thumb"]
+                if meta.get("duration"):
+                    send_args["duration"] = meta["duration"] // num_parts
+                if meta.get("width"):
+                    send_args["width"] = meta["width"]
+                if meta.get("height"):
+                    send_args["height"] = meta["height"]
+                
+                msg = self._client.send_video(**send_args)
                 sent_messages.append(msg)
                 logging.info("Sent part %d/%d: message_id=%s", part_num, num_parts, msg.id)
                 
@@ -525,6 +674,39 @@ class BaseDownloader(ABC):
                 except:
                     pass
         
+        # Forward all parts to archive channel
+        if ARCHIVE_CHANNEL and sent_messages:
+            try:
+                from database.model import get_user_stats
+                
+                # Get user info
+                user_info = get_user_stats(self._from_user)
+                if user_info:
+                    name = user_info.get('first_name') or ""
+                    if user_info.get('username'):
+                        name = f"{name} @{user_info['username']}".strip()
+                    user_display = name if name else str(self._from_user)
+                else:
+                    user_display = str(self._from_user)
+                
+                for msg in sent_messages:
+                    original_caption = msg.caption or ""
+                    archive_caption = (
+                        f"👤 משתמש: {user_display}\n"
+                        f"🆔 {self._from_user}\n"
+                        f"{original_caption}"
+                    )
+                    
+                    self._client.copy_message(
+                        chat_id=ARCHIVE_CHANNEL,
+                        from_chat_id=self._chat_id,
+                        message_id=msg.id,
+                        caption=archive_caption
+                    )
+                logging.info("Forwarded %d split parts to archive channel", len(sent_messages))
+            except Exception as e:
+                logging.error("Failed to forward split parts to archive: %s", e)
+
         return sent_messages[-1] if sent_messages else None
 
     def _upload(self, files=None, meta=None, skip_archive=False):
@@ -566,34 +748,87 @@ class BaseDownloader(ABC):
             video_path = Path(video_file)
             original_size = video_path.stat().st_size
             if original_size > TG_NORMAL_MAX_SIZE:
-                # Video too large - split and upload
-                logging.info("Video %s exceeds Telegram limit, using split upload", video_path.name)
-                
-                # Record credits BEFORE splitting (based on original file size)
-                self._remaining_credits = self._record_usage(original_size)
-                
-                parts = self._split_video_if_needed(video_path)
-                if len(parts) > 1:
-                    # Use split upload flow
-                    success = self._upload_split_video(parts, meta)
-                    # Handle success message
-                    remaining_text = ""
-                    if hasattr(self, '_remaining_credits') and self._remaining_credits is not None:
-                        remaining_text = f" | קרדיטים נותרים: {self._remaining_credits}"
-                    self._bot_msg.edit_text(f"✅ הושלם בהצלחה - {len(parts)} חלקים{remaining_text}")
-                    return success
+                # Video too large - check type
+                if video_path.suffix.lower() == '.mkv':
+                    logging.info("Large MKV detected (%s), using ZIP split to preserve audio", video_path.name)
+                    # Use ZIP split logic from torrent.py
+                    self.edit_text("✂️ ההורדה גדולה מדי לטלגרם, מכווץ ומפצל ל-ZIP...")
+                    
+                    try:
+                        # Local import to avoid circular dependency
+                        from engine.torrent import process_large_mkv
+                        parts = process_large_mkv(video_path, Path(self._tempdir.name))
+                        
+                        # Remove original video from files list and add parts
+                        # Convert all to string for comparison/removal
+                        files = [f for f in files if str(f) != str(video_path)]
+                        files.extend(parts)
+                        
+                        # Continue to normal upload flow (files list updated)
+                        continue
+                        
+                    except Exception as e:
+                        logging.error("Failed to split MKV archive: %s", e)
+                        raise ValueError(f"שגיאה בפיצול הקובץ: {e}")
+
+                else:
+                    # Video too large (MP4 etc) - split as video and upload
+                    logging.info("Video %s exceeds Telegram limit, using split upload", video_path.name)
+                    
+                    # Record credits BEFORE splitting (based on original file size)
+                    self._remaining_credits = self._record_usage(original_size)
+                    
+                    parts = self._split_video_if_needed(video_path)
+                    if len(parts) > 1:
+                        # Use split upload flow
+                        success = self._upload_split_video(parts, meta)
+                        # Handle success message
+                        remaining_text = ""
+                        if hasattr(self, '_remaining_credits') and self._remaining_credits is not None:
+                            remaining_text = f" | קרדיטים נותרים: {self._remaining_credits}"
+                        self._bot_msg.edit_text(f"✅ הושלם בהצלחה - {len(parts)} חלקים{remaining_text}")
+                        return success
 
         success = SimpleNamespace(document=None, video=None, audio=None, animation=None, photo=None)
         if self._format == "document":
             logging.info("Sending as document for %s", self._url)
-            success = self.send_something(
-                chat_id=self._chat_id,
-                files=files,
-                _type="document",
-                thumb=meta.get("thumb"),
-                force_document=True,
-                caption=meta.get("caption"),
-            )
+            
+            # Special handling for split archives (multiple documents) to show progress
+            # send_media_group does not support progress callback
+            if len(files) > 1:
+                success = []
+                total_files = len(files)
+                for i, file_path in enumerate(files):
+                    # Update status message
+                    self.edit_text(f"⬆️ מעלה חלק {i+1} מתוך {total_files}...")
+                    
+                    # Add caption logic similar to split video
+                    part_caption = None
+                    if i == total_files - 1:
+                         # Full caption on last part
+                         part_caption = meta.get("caption")
+                    else:
+                         # Minimal caption for previous parts
+                         part_caption = f"📎 חלק {i+1}/{total_files}: {Path(file_path).name}"
+                    
+                    msg = self._client.send_document(
+                        chat_id=self._chat_id,
+                        document=str(file_path),
+                        caption=part_caption,
+                        thumb=meta.get("thumb"),
+                        force_document=True,
+                        progress=self.upload_hook
+                    )
+                    success.append(msg)
+            else:
+                success = self.send_something(
+                    chat_id=self._chat_id,
+                    files=files,
+                    _type="document",
+                    thumb=meta.get("thumb"),
+                    force_document=True,
+                    caption=meta.get("caption"),
+                )
         elif self._format == "photo":
             logging.info("Sending as photo for %s", self._url)
             success = self.send_something(
@@ -675,64 +910,27 @@ class BaseDownloader(ABC):
             return
 
         video_key = self._calc_video_key()
-        obj = success.document or success.video or success.audio or success.animation or success.photo
+        
+        if isinstance(success, list):
+            file_ids = []
+            for msg in success:
+                obj = msg.document or msg.video or msg.audio or msg.animation or msg.photo
+                if obj:
+                    file_ids.append(getattr(obj, "file_id", None))
+            file_id_json = json.dumps(file_ids)
+        else:
+            obj = success.document or success.video or success.audio or success.animation or success.photo
+            file_id_json = json.dumps([getattr(obj, "file_id", None)])
+
         mapping = {
-            "file_id": json.dumps([getattr(obj, "file_id", None)]),
+            "file_id": file_id_json,
             "meta": json.dumps({k: v for k, v in meta.items() if k != "thumb"}, ensure_ascii=False),
         }
 
         self._redis.add_cache(video_key, mapping)
         
-        # Forward to archive channel if configured (unless skip_archive is set)
-        logging.info("Archive channel check: ARCHIVE_CHANNEL=%s, success=%s, skip_archive=%s", ARCHIVE_CHANNEL, type(success), skip_archive)
-        if ARCHIVE_CHANNEL and success and not skip_archive:
-            try:
-                msg_id = getattr(success, 'id', None)
-                
-                # Get user info for caption
-                user_info = get_user_stats(self._from_user)
-                if user_info:
-                    name = user_info.get('first_name') or ""
-                    if user_info.get('username'):
-                        name = f"{name} @{user_info['username']}".strip()
-                    user_display = name if name else str(self._from_user)
-                else:
-                    user_display = str(self._from_user)
-                
-                # Get filename
-                filename = "Unknown"
-                if files and len(files) > 0:
-                    filename = Path(files[0]).name
-
-                # Create archive caption with link
-                archive_caption = (
-                    f"👤 משתמש: {user_display}\n"
-                    f"🆔 {self._from_user}\n"
-                    f"📁 קובץ: {filename}\n"
-                    f"🔗 קישור: {self._url}"
-                )
-                
-                # Check if this is a media group (multiple files)
-                media_group_id = getattr(success, 'media_group_id', None)
-                
-                if media_group_id and len(files) > 1:
-                    # For media groups, send files directly to archive channel
-                    logging.info("Sending media group (%d files) to archive channel", len(files))
-                    archive_inputs = generate_input_media([str(f) for f in files], archive_caption)
-                    self._client.send_media_group(chat_id=ARCHIVE_CHANNEL, media=archive_inputs)
-                    logging.info("Sent media group to archive channel: %s", ARCHIVE_CHANNEL)
-                else:
-                    # Single file - copy message with new caption
-                    logging.info("Attempting to copy message %s to channel %s with custom caption", msg_id, ARCHIVE_CHANNEL)
-                    self._client.copy_message(
-                        chat_id=ARCHIVE_CHANNEL,
-                        from_chat_id=self._chat_id,
-                        message_id=msg_id,
-                        caption=archive_caption
-                    )
-                    logging.info("Forwarded to archive channel: %s", ARCHIVE_CHANNEL)
-            except Exception as e:
-                logging.error("Failed to forward to archive channel: %s", e)
+        # Forward to archive channel using helper
+        self._forward_to_archive(success, files, skip_archive)
         
         # Send subtitle files if user has subtitles enabled and files were found
         if subtitle_files and self._subtitles:
