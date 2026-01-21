@@ -454,6 +454,7 @@ class BaseDownloader(ABC):
     def _forward_to_archive(self, success, files, skip_archive=False):
         """Forward success message to archive channel."""
         from database.model import get_user_stats
+        from config import CAPTION_URL_LENGTH_LIMIT
         import html
         
         if not ARCHIVE_CHANNEL or not success or skip_archive:
@@ -483,12 +484,21 @@ class BaseDownloader(ABC):
             if files and len(files) > 0:
                 filename = Path(files[0]).name
             
+            # Truncate things for caption
+            display_url = self._url
+            if len(display_url) > CAPTION_URL_LENGTH_LIMIT:
+                display_url = display_url[:CAPTION_URL_LENGTH_LIMIT] + "..."
+            
+            display_filename = filename
+            if len(display_filename) > 200:
+                display_filename = display_filename[:200] + "..."
+
             # Create archive caption
             archive_caption = (
                 f"👤 משתמש: {html.escape(user_display)}\n"
                 f"🆔 {self._from_user}\n"
-                f"📁 קובץ: {html.escape(filename)}\n"
-                f"<blockquote expandable>🔗 קישור: {html.escape(self._url)}</blockquote>"
+                f"📁 קובץ: {html.escape(display_filename)}\n"
+                f"<blockquote expandable>🔗 קישור: {html.escape(display_url)}</blockquote>"
             )
             
             if media_group_id and isinstance(success, list):
