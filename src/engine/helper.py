@@ -83,3 +83,16 @@ def moon_progress_bar(percent: float, total_cells: int = 10) -> str:
     full_count = filled_cells - (1 if partial_moon else 0)
     
     return "🌕" * full_count + partial_moon + "🌑" * empty_count
+
+
+def safe_truncate(text: str, limit: int = 4000) -> str:
+    """
+    Safely truncate text to stay within Telegram's message limit.
+    Adds ellipsis if truncated.
+    """
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
+

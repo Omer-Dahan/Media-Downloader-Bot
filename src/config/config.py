@@ -57,6 +57,9 @@ INSTAGRAM_SESSION_FILE = get_env("INSTAGRAM_SESSION_FILE")
 # Use browser extension like "Get cookies.txt LOCALLY" to export cookies
 INSTAGRAM_COOKIES_FILE = get_env("INSTAGRAM_COOKIES_FILE")
 
+# TikTok cookies file for yt-dlp/gallery-dl
+TIKTOK_COOKIES_FILE = get_env("TIKTOK_COOKIES_FILE")
+
 # qBittorrent settings
 QBITTORRENT_HOST = get_env("QBITTORRENT_HOST", "localhost")
 QBITTORRENT_PORT = get_env("QBITTORRENT_PORT", 8080)

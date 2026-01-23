@@ -7,7 +7,7 @@ from pyrogram import types
 
 import yt_dlp
 
-from config import ARCHIVE_CHANNEL
+from config import ARCHIVE_CHANNEL, TIKTOK_COOKIES_FILE
 from engine.base import BaseDownloader
 
 # Check if gallery-dl is available for slideshow downloads
@@ -84,6 +84,11 @@ class TikTokDownload(BaseDownloader):
             "fragment_retries": 3,
         }
         
+        # Add cookies if available
+        if TIKTOK_COOKIES_FILE and pathlib.Path(TIKTOK_COOKIES_FILE).exists():
+            logging.info("TikTok: Using cookies file for yt-dlp: %s", TIKTOK_COOKIES_FILE)
+            ydl_opts["cookiefile"] = TIKTOK_COOKIES_FILE
+        
         # Add subtitle options if user has subtitles enabled
         if self._subtitles:
             logging.info("TikTok: Subtitles enabled - will download if available")
@@ -145,6 +150,11 @@ class TikTokDownload(BaseDownloader):
             config.set(("extractor",), "base-directory", self._tempdir.name)
             config.set(("extractor",), "directory", [])  # No subdirectories
             config.set(("extractor", "tiktok"), "videos", True)  # Include audio
+            
+            # Add cookies if available
+            if TIKTOK_COOKIES_FILE and pathlib.Path(TIKTOK_COOKIES_FILE).exists():
+                logging.info("TikTok: Using cookies for gallery-dl: %s", TIKTOK_COOKIES_FILE)
+                config.set(("extractor",), "cookies", [TIKTOK_COOKIES_FILE])
             
             # Run the download job
             download_job = job.DownloadJob(url)
