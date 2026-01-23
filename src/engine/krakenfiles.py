@@ -1,7 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
+from engine.helper import safe_truncate
 from engine.direct import DirectDownload
-
 
 def krakenfiles_download(client, bot_message, url: str):
     session = requests.Session()
@@ -56,10 +56,11 @@ def krakenfiles_download(client, bot_message, url: str):
             downloader.start()
 
         except ValueError as e:
-            bot_message.edit_text(f"ההורדה נכשלה!❌\n{str(e)}")
+            truncated_error = safe_truncate(str(e), limit=3500)
             bot_message.edit_text(
-                f"ההורדה נכשלה!❌\nאירעה שגיאה: {str(e)}\n"
+                f"ההורדה נכשלה!❌\nאירעה שגיאה: `{truncated_error}`\n"
                 "אנא בדוק את הקישור ונסה שוב."
             )
+
 
     _download(url)

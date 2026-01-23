@@ -253,10 +253,10 @@ class DirectDownload(BaseDownloader):
         except subprocess.TimeoutExpired:
             error_msg = "\u05d4\u05d4\u05d5\u05e8\u05d3\u05d4 \u05d4\u05d5\u05e4\u05e1\u05e7\u05d4 \u05e2\u05e7\u05d1 \u05d7\u05e8\u05d9\u05d2\u05d4 \u05de\u05d6\u05de\u05df \u05d4\u05d4\u05de\u05ea\u05e0\u05d4 (5 \u05d3\u05e7\u05d5\u05ea)."
             logging.error(error_msg)
-            self._bot_msg.edit_text(f"ההורדה נכשלה!❌\n\n{error_msg}")
+            self.edit_text(f"ההורדה נכשלה!❌\n\n{error_msg}")
             return []
         except Exception as e:
-            self._bot_msg.edit_text(f"ההורדה נכשלה!❌\n\n`{e}`")
+            self.edit_text(f"ההורדה נכשלה!❌\n\n`{e}`")
             return []
         finally:
             if self._process:

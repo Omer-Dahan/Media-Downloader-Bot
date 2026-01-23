@@ -32,7 +32,7 @@ from database.model import (
     get_total_credits,
     CreditsExhaustedException,
 )
-from engine.helper import debounce, sizeof_fmt
+from engine.helper import debounce, sizeof_fmt, safe_truncate
 from engine.network_errors import NetworkError, is_network_error, format_network_error_message
 
 cancellation_events = set()
@@ -221,12 +221,15 @@ class BaseDownloader(ABC):
 
         self._last_edit_time = now
 
+        # Safely truncate text to avoid MessageTooLong error
+        truncated_text = safe_truncate(text)
+
         # Add cancel button
         markup = types.InlineKeyboardMarkup(
             [[types.InlineKeyboardButton("❌ ביטול", callback_data=f"cancel:{self._chat_id}:{self._id}")]]
         )
         try:
-            self._bot_msg.edit_text(text, reply_markup=markup)
+            self._bot_msg.edit_text(truncated_text, reply_markup=markup)
         except Exception:
             # Ignore edit errors (e.g. message not modified)
             pass

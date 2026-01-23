@@ -2,8 +2,8 @@ import tempfile
 import pathlib
 import re
 from urllib.parse import urlparse
+from engine.helper import safe_truncate
 from engine.direct import DirectDownload
-
 
 def pixeldrain_download(client, bot_message, url):
     FILE_URL_FORMAT = "https://pixeldrain.com/api/file/{}?download"
@@ -31,10 +31,11 @@ def pixeldrain_download(client, bot_message, url):
             ddl.start()
 
         except ValueError as e:
-            bot_message.edit_text(f"ההורדה נכשלה!❌\n\n`{e}`")
+            truncated_error = safe_truncate(str(e), limit=3500)
             bot_message.edit_text(
-                f"ההורדה נכשלה!❌\nאירעה שגיאה: {str(e)}\n"
+                f"ההורדה נכשלה!❌\nאירעה שגיאה: `{truncated_error}`\n"
                 "אנא בדוק את הקישור ונסה שוב."
             )
+
 
     _download(url)
