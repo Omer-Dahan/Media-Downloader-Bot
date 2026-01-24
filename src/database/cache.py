@@ -21,19 +21,30 @@ class VideoCache(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+import threading
+
 # Create engine and session factory
 _engine = None
 _SessionFactory = None
+_lock = threading.Lock()
 
 
 def _get_session():
     """Get or create the SQLite session factory."""
     global _engine, _SessionFactory
-    if _engine is None:
-        db_dsn = os.getenv("DB_DSN", "sqlite:///database.sqlite3")
-        _engine = create_engine(db_dsn)
-        Base.metadata.create_all(_engine)
-        _SessionFactory = sessionmaker(bind=_engine)
+    
+    if _SessionFactory is None:
+        with _lock:
+            if _SessionFactory is None:
+                db_dsn = os.getenv("DB_DSN", "sqlite:///database.sqlite3")
+                try:
+                    _engine = create_engine(db_dsn)
+                    Base.metadata.create_all(_engine)
+                    _SessionFactory = sessionmaker(bind=_engine)
+                except Exception as e:
+                    logging.error("Failed to initialize database: %s", e)
+                    raise
+                    
     return _SessionFactory()
 
 

@@ -46,6 +46,7 @@ from database.model import (
 )
 from engine import direct_entrance, youtube_entrance, youtube_entrance_with_quality, get_youtube_video_info, special_download_entrance, torrent_entrance, is_magnet_link
 from engine.base import cancellation_events, _resume_state_cache
+from engine.concurrency import concurrency_manager
 from engine.generic import check_and_send_update_notification
 from utils import extract_url_and_name, sizeof_fmt, timeof_fmt, is_youtube
 from admin import admin_panel_command, admin_callback_handler, admin_text_handler, _admin_state
@@ -604,6 +605,15 @@ def download_handler(client: Client, message: types.Message):
             message.reply_text(link_check_result, quote=True)
             return
         
+        # Check concurrency limit
+        if not concurrency_manager.acquire(chat_id):
+            message.reply_text(
+                "❌ **יש לך יותר מדי פעולות פעילות במקביל.**\n"
+                "אנא המתן לסיום ההורדות הקיימות.",
+                quote=True
+            )
+            return
+        
         # Check if this is a YouTube link - show quality selection menu
         if is_youtube(url):
             # Generate a short hash for the URL
@@ -724,6 +734,16 @@ def torrent_file_handler(client: Client, message: types.Message):
     
     start_request_log(f"torrent:{file_name}", chat_id)
     
+    # Check concurrency limit
+    if not concurrency_manager.acquire(chat_id):
+        message.reply_text(
+            "❌ **יש לך יותר מדי פעולות פעילות במקביל.**\n"
+            "אנא המתן לסיום ההורדות הקיימות.",
+            quote=True
+        )
+        end_request_log()
+        return
+    
     try:
         # Download the .torrent file
         with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as tmp:
@@ -747,6 +767,7 @@ def torrent_file_handler(client: Client, message: types.Message):
         )
     finally:
         end_request_log()
+        concurrency_manager.release(chat_id)
         # Cleanup temp file
         import os
         try:
@@ -944,6 +965,15 @@ def youtube_quality_callback(client: Client, callback_query: types.CallbackQuery
     # Start request logging
     start_request_log(url, chat_id)
     
+    # Check concurrency limit
+    if not concurrency_manager.acquire(chat_id):
+        callback_query.message.edit_text(
+            "❌ **יש לך יותר מדי פעולות פעילות במקביל.**\n"
+            "אנא המתן לסיום ההורדות הקיימות."
+        )
+        end_request_log()
+        return
+    
     # Start download with selected quality
     try:
         client.send_chat_action(chat_id, enums.ChatAction.UPLOAD_VIDEO)
@@ -969,6 +999,7 @@ def youtube_quality_callback(client: Client, callback_query: types.CallbackQuery
         )
     finally:
         end_request_log()
+        concurrency_manager.release(chat_id)
 
 
 @app.on_callback_query(filters.regex(r"^cancel:"))
@@ -1052,6 +1083,7 @@ def resume_callback(client: Client, callback_query: types.CallbackQuery):
         )
     finally:
         end_request_log()
+        concurrency_manager.release(chat_id)
 
 
 if __name__ == "__main__":
