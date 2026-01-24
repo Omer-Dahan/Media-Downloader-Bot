@@ -423,6 +423,12 @@ class YoutubeDownload(BaseDownloader):
                 # ydl_opts["extractor_args"] = {
                 #     "youtube": [f"po_token=web.player+{potoken}", f"po_token=web.gvs+{potoken}"]
                 # }
+        else:
+            # For non-YouTube sites, use impersonate to bypass Cloudflare and other anti-bot measures
+            # This requires curl_cffi to be installed (yt-dlp[curl-cffi])
+            logging.info("[IMPERSONATE] Using browser impersonation for non-YouTube site")
+            ydl_opts["impersonate"] = "chrome"
+            ydl_opts["extractor_args"] = {"generic": ["impersonate"]}
 
 
         files = None
@@ -503,6 +509,62 @@ class YoutubeDownload(BaseDownloader):
 
         return files
 
+    def _try_gallery_dl(self) -> list | None:
+        """Try to download using gallery-dl as a fallback."""
+        import subprocess
+        
+        output = Path(self._tempdir.name)
+        
+        try:
+            # Run gallery-dl with output to temp directory
+            cmd = [
+                "gallery-dl",
+                "--dest", str(output),
+                "--no-mtime",  # Don't set modification time
+                "-q",  # Quiet mode
+                self._url
+            ]
+            
+            logging.info("[GALLERY-DL] Running: %s", " ".join(cmd))
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+            
+            if result.returncode != 0:
+                logging.warning("[GALLERY-DL] Failed with code %d: %s", result.returncode, result.stderr[:200] if result.stderr else "")
+                return None
+            
+            # Find downloaded files
+            video_extensions = {'.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.m4v'}
+            audio_extensions = {'.mp3', '.m4a', '.aac', '.ogg', '.opus', '.wav', '.flac'}
+            media_extensions = video_extensions | audio_extensions
+            
+            # Search recursively since gallery-dl may create subdirectories
+            files = []
+            for ext in media_extensions:
+                files.extend(output.rglob(f"*{ext}"))
+            
+            if files:
+                logging.info("[GALLERY-DL] Success! Found %d files", len(files))
+                return files
+            else:
+                logging.warning("[GALLERY-DL] No media files found in output")
+                return None
+                
+        except subprocess.TimeoutExpired:
+            logging.error("[GALLERY-DL] Timed out after 5 minutes")
+            return None
+        except FileNotFoundError:
+            logging.error("[GALLERY-DL] gallery-dl not installed or not in PATH")
+            return None
+        except Exception as e:
+            logging.error("[GALLERY-DL] Error: %s", e)
+            return None
+
     def _start(self, formats=None):
         # start download and upload, no cache hit
         # user can choose format by clicking on the button(custom config)
@@ -527,6 +589,12 @@ class YoutubeDownload(BaseDownloader):
             all_files_in_temp = list(Path(self._tempdir.name).glob("*"))
             logging.info("Files returned from _download: %s", files)
             logging.info("All files in tempdir: %s", all_files_in_temp)
+            
+            if not files:
+                # Fallback to gallery-dl
+                logging.info("[GALLERY-DL FALLBACK] yt-dlp failed, trying gallery-dl...")
+                self.edit_text("🔄 **yt-dlp נכשל, מנסה gallery-dl...**")
+                files = self._try_gallery_dl()
             
             if not files:
                 raise ValueError("ההורדה נכשלה - לא נמצאו פורמטים זמינים. נסה לעדכן את yt-dlp.")
