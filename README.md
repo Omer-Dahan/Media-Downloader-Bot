@@ -7,136 +7,136 @@
 ![Telegram](https://img.shields.io/badge/Telegram-Bot-blue?style=for-the-badge&logo=telegram)
 ![yt--dlp](https://img.shields.io/badge/yt--dlp-powered-red?style=for-the-badge)
 
-**בוט טלגרם אישי להורדת מדיה מפלטפורמות פופולריות והעלאה ישירה לטלגרם**
+**Personal Telegram bot for downloading media from popular platforms and uploading directly to Telegram**
 
-[English](#-what-this-bot-does) • [עברית](#-מה-הבוט-עושה)
+[🇮🇱 עברית](README-he.md) • [🇺🇸 English](README.md)
 
 </div>
 
 ---
 
-## ✨ תכונות עיקריות
+## ✨ Key Features
 
-| תכונה | תיאור |
-|--------|--------|
-| 🔗 **זיהוי אוטומטי** | מזהה את הפלטפורמה ומוריד אוטומטית |
-| 🎬 **בחירת איכות** | 1080p / 720p / 480p / 360p / שמע בלבד |
-| 🧲 **הורדת טורנטים** | תמיכה במגנט לינקים וקבצי .torrent (VIP) |
-| 📊 **סרגל התקדמות** | מעקב בזמן אמת עם אנימציית ירח 🌑→🌕 |
-| ✂️ **פיצול קבצים** | פיצול אוטומטי לקבצים מעל 2GB |
-| 💳 **מערכת קרדיטים** | ניהול מכסות ותשלומים מתוך הבוט |
-| 🛡️ **פאנל ניהול** | ניהול משתמשים, חסימות וקרדיטים |
-| ⚡ **הורדה מהירה** | תמיכה ב-aria2 עם 16 חיבורים מקבילים |
-| ❌ **כפתור ביטול** | ביטול הורדות באמצע התהליך |
-| 🔄 **המשך הורדה** | אפשרות להמשיך הורדה שנכשלה |
+| Feature | Description |
+|---------|-------------|
+| 🔗 **Auto Detection** | Automatically detects platform and downloads |
+| 🎬 **Quality Selection** | 1080p / 720p / 480p / 360p / Audio only |
+| 🧲 **Torrent Downloads** | Support for magnet links and .torrent files (VIP) |
+| 📊 **Progress Bar** | Real-time tracking with moon animation 🌑→🌕 |
+| ✂️ **File Splitting** | Auto-split for files over 2GB |
+| 💳 **Credit System** | Quota and payment management from the bot |
+| 🛡️ **Admin Panel** | User management, blocks, and credits |
+| ⚡ **Fast Downloads** | aria2 support with 16 parallel connections |
+| ❌ **Cancel Button** | Cancel downloads mid-progress |
+| 🔄 **Resume Downloads** | Resume failed downloads |
 
 ---
 
-## 🌐 פלטפורמות נתמכות
+## 🌐 Supported Platforms
 
 <div align="center">
 
-| פלטפורמה | סטטוס | הערות |
+| Platform | Status | Notes |
 |----------|--------|-------|
-| ▶️ YouTube | ✅ | כולל פלייליסטים |
-| 🎵 TikTok | ✅ | וידאו + תמונות |
+| ▶️ YouTube | ✅ | Including playlists |
+| 🎵 TikTok | ✅ | Video + photos |
 | 📸 Instagram | ✅ | Reels, Stories, Posts |
-| 👽 Reddit | ✅ | וידאו + אודיו |
-| 📁 PixelDrain | ✅ | הורדה ישירה |
-| 🦑 KrakenFiles | ✅ | הורדה ישירה |
-| 🧲 Torrents | ✅ | VIP בלבד |
-| 🔗 Direct Links | ✅ | כל קישור ישיר |
-| 🌍 +1500 אתרים | ✅ | דרך yt-dlp |
+| 👽 Reddit | ✅ | Video + audio |
+| 📁 PixelDrain | ✅ | Direct download |
+| 🦑 KrakenFiles | ✅ | Direct download |
+| 🧲 Torrents | ✅ | VIP only |
+| 🔗 Direct Links | ✅ | Any direct link |
+| 🌍 +1500 sites | ✅ | Via yt-dlp |
 
 </div>
 
 ---
 
-## 🎨 תכונות ממשק
+## 🎨 UI Features
 
-### 🌙 סרגל התקדמות ירח
+### 🌙 Moon Progress Bar
 ```
 🌕🌕🌕🌕🌖🌑🌑🌑🌑🌑 45%
 ```
 
-### 📊 תצוגת הורדה
+### 📊 Download Display
 ```
-📥 מוריד...
+📥 Downloading...
 ━━━━━━━━━━━━━━━━━━
 🌕🌕🌕🌕🌖🌑🌑🌑🌑🌑 45%
 📊 400MB/900MB
-⚡ מהירות: 15.3MB/s
-⏱️ זמן משוער: 2:30 דקות
+⚡ Speed: 15.3MB/s
+⏱️ ETA: 2:30
 ━━━━━━━━━━━━━━━━━━
 ```
 
 ---
 
-## 📁 מבנה הפרויקט
+## 📁 Project Structure
 
 ```
 media-downloader-bot/
 ├── 📂 src/
-│   ├── 📄 main.py              # נקודת כניסה + handlers
-│   ├── 📄 admin.py             # פאנל ניהול
-│   ├── 📂 engine/              # מנועי הורדה
-│   │   ├── 📄 base.py          # מחלקת בסיס
+│   ├── 📄 main.py              # Entry point + handlers
+│   ├── 📄 admin.py             # Admin panel
+│   ├── 📂 engine/              # Download engines
+│   │   ├── 📄 base.py          # Base class
 │   │   ├── 📄 generic.py       # yt-dlp wrapper
-│   │   ├── 📄 direct.py        # הורדה ישירה
+│   │   ├── 📄 direct.py        # Direct downloads
 │   │   ├── 📄 instagram.py     # Instagram handler
 │   │   ├── 📄 tiktok.py        # TikTok handler
 │   │   ├── 📄 reddit.py        # Reddit handler
 │   │   ├── 📄 torrent.py       # Torrent handler
-│   │   └── 📄 ...              # handlers נוספים
-│   ├── 📂 database/            # מודלים ו-cache
-│   ├── 📂 config/              # הגדרות
-│   └── 📂 utils/               # פונקציות עזר
-├── 📂 assets/                  # תמונות ואייקונים
-├── 📄 requirements.txt         # תלויות Python
-├── 📄 run_bot.bat              # הרצה ב-Windows
+│   │   └── 📄 ...              # More handlers
+│   ├── 📂 database/            # Models & cache
+│   ├── 📂 config/              # Configuration
+│   └── 📂 utils/               # Helper functions
+├── 📂 assets/                  # Images & icons
+├── 📄 requirements.txt         # Python dependencies
+├── 📄 run_bot.bat              # Windows runner
 ├── 📄 LICENSE                  # GPL-3.0
-└── 📄 README.md                # אתה כאן! 👋
+└── 📄 README.md                # You are here! 👋
 ```
 
 ---
 
-## 🛠️ דרישות מערכת
+## 🛠️ System Requirements
 
 - **Python 3.10+**
-- **FFmpeg** מותקן ונגיש ב-PATH
-- **Telegram Bot Token** מ-@BotFather
-- **Telegram API Credentials** מ-my.telegram.org
+- **FFmpeg** installed and in PATH
+- **Telegram Bot Token** from @BotFather
+- **Telegram API Credentials** from my.telegram.org
 
-### תלויות אופציונליות
+### Optional Dependencies
 
-| כלי | שימוש | התקנה |
-|-----|-------|-------|
-| 🚀 aria2 | הורדה מהירה (16 חיבורים) | `winget install aria2.aria2` |
-| 🧲 qBittorrent | הורדת טורנטים | [qbittorrent.org](https://www.qbittorrent.org/) |
+| Tool | Usage | Installation |
+|------|-------|--------------|
+| 🚀 aria2 | Fast downloads (16 connections) | `winget install aria2.aria2` |
+| 🧲 qBittorrent | Torrent downloads | [qbittorrent.org](https://www.qbittorrent.org/) |
 
 ---
 
-## 🚀 התקנה
+## 🚀 Installation
 
-### 1. שכפל את הפרויקט
+### 1. Clone the repository
 ```bash
 git clone https://github.com/Omer-Dahan/media-downloader-bot.git
 cd media-downloader-bot
 ```
 
-### 2. צור סביבה וירטואלית
+### 2. Create virtual environment
 ```bash
 python -m venv venv
 venv\Scripts\activate  # Windows
 source venv/bin/activate  # Linux/Mac
 ```
 
-### 3. התקן תלויות
+### 3. Install dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. הגדר את קובץ `.env`
+### 4. Configure `.env` file
 ```env
 # Telegram
 APP_ID=your_app_id
@@ -151,77 +151,71 @@ DB_DSN=sqlite:///database.sqlite3
 ENABLE_VIP=true
 ENABLE_ARIA2=true
 ENABLE_FFMPEG=true
-
-# qBittorrent (optional)
-QBITTORRENT_HOST=localhost
-QBITTORRENT_PORT=8080
-QBITTORRENT_USERNAME=admin
-QBITTORRENT_PASSWORD=adminadmin
 ```
 
-### 5. הפעל את הבוט
+### 5. Run the bot
 ```bash
 python src/main.py
 ```
 
 ---
 
-## 🤖 פקודות זמינות
+## 🤖 Available Commands
 
-| פקודה | תיאור |
-|-------|-------|
-| `/start` | התחלה והצגת תפריט ראשי |
-| `/help` | עזרה ומידע נוסף |
-| `/settings` | הגדרות איכות ופורמט |
-| `/stats` | סטטיסטיקות שרת |
-| `/buy` | רכישת קרדיטים |
-| `/torrent` | הורדת טורנט (VIP) |
-| `/direct` | הורדה ישירה מלינק |
-| `/adminpanel` | פאנל ניהול (מנהלים) |
+| Command | Description |
+|---------|-------------|
+| `/start` | Start and show main menu |
+| `/help` | Help and information |
+| `/settings` | Quality and format settings |
+| `/stats` | Server statistics |
+| `/buy` | Buy credits |
+| `/torrent` | Download torrent (VIP) |
+| `/direct` | Direct download from link |
+| `/adminpanel` | Admin panel (admins only) |
 
 ---
 
-## 💳 מערכת הקרדיטים
+## 💳 Credit System
 
 ```
-1 קרדיט = 200MB
+1 credit = 200MB
 ───────────────────
-קובץ 400MB = 2 קרדיטים
-קובץ 1GB = 5 קרדיטים
-פלייליסט = סכום כל הקבצים
+400MB file = 2 credits
+1GB file = 5 credits
+Playlist = sum of all files
 ```
 
 ---
 
-## 🔐 אבטחה
+## 🔐 Security
 
-- 🔒 קבצי `.env`, cookies ו-sessions לא נכללים ב-Git
-- 🛡️ טוקנים ונתונים רגישים מאוחסנים בצורה מאובטחת
-- ⚠️ האחריות לציות לתנאי השימוש של הפלטפורמות היא על המפעיל
-
----
-
-## 📜 רישיון
-
-פרויקט זה מורשה תחת **GNU General Public License v3.0**.
-
-כל הפצה או שינוי חייבים לעמוד בתנאי רישיון זה.
+- 🔒 `.env`, cookies, and sessions are excluded from Git
+- 🛡️ Tokens and sensitive data stored securely
+- ⚠️ Compliance with platform ToS is the operator's responsibility
 
 ---
 
-## 🙏 קרדיטים
+## 📜 License
 
-פרויקט זה מבוסס על:  
+This project is licensed under **GNU General Public License v3.0**.
+
+Any redistribution or modification must comply with the terms of this license.
+
+---
+
+## 🙏 Credits
+
+This project is based on:  
 **[ytdlbot](https://github.com/tgbot-collection/ytdlbot)**
 
-הקוד עבר שינויים, הרחבות והתאמות עם תכונות נוספות ושינויים מבניים.
+The codebase was modified, extended, and customized with additional features and structural changes.
 
 ---
 
-## ⚠️ הצהרת אחריות
+## ⚠️ Disclaimer
 
-בוט זה מיועד **לשימוש חוקי בלבד**.  
-האחריות על התוכן המורד ועמידה בחוקים המקומיים ותנאי הפלטפורמות היא על המשתמש בלבד.
+This bot is intended for **lawful use only**.  
+Responsibility for downloaded content and compliance with local laws and platform policies lies solely with the user.
 
 ---
 
@@ -230,4 +224,3 @@ python src/main.py
 **Made with ❤️ by Omer**
 
 </div>
-
