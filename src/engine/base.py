@@ -999,6 +999,22 @@ class BaseDownloader(ABC):
                 except Exception as e:
                     logging.error("Failed to send subtitle file %s: %s", sub_file, e)
         
+        # Record usage based on actual file sizes (only for non-cached files)
+        if not meta.get("cache"):
+            video_extensions = {'.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.m4v'}
+            audio_extensions = {'.mp3', '.m4a', '.aac', '.ogg', '.opus', '.wav', '.flac'}
+            media_extensions = video_extensions | audio_extensions
+            
+            # Calculate file sizes from actual paths
+            file_sizes = []
+            for f in files:
+                file_path = Path(f) if isinstance(f, str) else f
+                if file_path.exists() and file_path.suffix.lower() in media_extensions:
+                    file_sizes.append(file_path.stat().st_size)
+            
+            if file_sizes:
+                self._remaining_credits = self._record_usage(file_sizes)
+        
         # change progress bar to done with remaining credits
         remaining_text = ""
         if hasattr(self, '_remaining_credits') and self._remaining_credits is not None:
@@ -1037,19 +1053,7 @@ class BaseDownloader(ABC):
                     raise
         else:
             self._start()
-            # Calculate file sizes for each media file (for per-file credit charging)
-            media_extensions = {'.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.m4v', '.mp3', '.m4a', '.aac', '.ogg', '.opus', '.wav', '.flac'}
-            file_sizes = [f.stat().st_size for f in Path(self._tempdir.name).glob("*") if f.is_file() and f.suffix.lower() in media_extensions]
-            # Record usage BEFORE success message (which is now in _start->_upload)
-            # But since _start calls _upload, we need to record after and update message separately
-            self._remaining_credits = self._record_usage(file_sizes)
-            # Only update success message if files were actually downloaded
-            if file_sizes:
-                try:
-                    remaining_text = f" | קרדיטים נותרים: {self._remaining_credits}"
-                    self._bot_msg.edit_text(f"✅ הושלם בהצלחה{remaining_text}")
-                except Exception:
-                    pass  # Ignore edit errors
+            # Credits are charged in _upload() - no need to charge again here
         
         # Send temporary notification with remaining credits (auto-delete after 5 seconds)
         if self._remaining_credits is not None:

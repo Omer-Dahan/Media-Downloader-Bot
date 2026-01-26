@@ -182,12 +182,6 @@ def get_paid_quota(uid: int):
     return math.inf
 
 
-def reset_free_quota(uid: int):
-    with session_manager() as session:
-        data = session.query(User).filter(User.user_id == uid).first()
-        if data:
-            data.free = 5
-
 
 def add_paid_quota(uid: int, amount: int):
     with session_manager() as session:
@@ -314,15 +308,6 @@ def init_user(uid: int, first_name: str = None, username: str = None):
                 user.username = username
 
 
-def reset_free():
-    """DEPRECATED: Daily reset removed. Credits are now persistent.
-    
-    This function is kept for backwards compatibility but does nothing.
-    Credit replenishment is now handled via manual admin action or purchase.
-    """
-    logging.info("reset_free() called but daily reset is disabled")
-    # Daily reset removed - credits are now persistent
-    pass
 
 
 def add_bandwidth_used(uid: int, size: int):

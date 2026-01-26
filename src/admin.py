@@ -12,8 +12,8 @@ from database.model import (
     reset_user_quota,
     block_user,
     unblock_user,
-    delete_user,
 )
+from utils import sizeof_fmt, timeof_fmt
 
 
 # State management for admin actions
@@ -116,22 +116,6 @@ def handle_server_stats(client: Client, callback_query: types.CallbackQuery):
             return func(*args)
         except Exception:
             return None
-    
-    def sizeof_fmt(num: int, suffix="B"):
-        for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
-            if abs(num) < 1024.0:
-                return "%3.1f%s%s" % (num, unit, suffix)
-            num /= 1024.0
-        return "%.1f%s%s" % (num, "Yi", suffix)
-    
-    def timeof_fmt(seconds):
-        periods = [("d", 86400), ("h", 3600), ("m", 60), ("s", 1)]
-        result = ""
-        for period_name, period_seconds in periods:
-            if seconds >= period_seconds:
-                period_value, seconds = divmod(seconds, period_seconds)
-                result += f"{int(period_value)}{period_name}"
-        return result
     
     try:
         cpu_usage = safe(psutil.cpu_percent)

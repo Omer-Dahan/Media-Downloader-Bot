@@ -9,7 +9,6 @@ from typing import Any
 
 import psutil
 import pyrogram.errors
-import yt_dlp
 from apscheduler.schedulers.background import BackgroundScheduler
 from pyrogram import Client, enums, filters, types
 
@@ -39,7 +38,6 @@ from database.model import (
     get_subtitles_settings,
     get_title_length_settings,
     init_user,
-    reset_free,
     set_user_settings,
     CreditsExhaustedException,
     get_total_credits,
@@ -213,9 +211,7 @@ def ping_handler(client: Client, message: types.Message):
 
         end_time = int(round(time.time() * 1000))
         ping_time = int(round(end_time - start_time))
-        message_sent = True
-        if message_sent:
-            message.reply_text(f"פינג: {ping_time:.2f} מילישניות", quote=True)
+        message.reply_text(f"פינג: {ping_time:.2f} מילישניות", quote=True)
         time.sleep(0.5)
         client.edit_message_text(chat_id=reply.chat.id, message_id=reply.id, text="בדיקת הפינג הושלמה.")
         time.sleep(1)
@@ -769,9 +765,8 @@ def torrent_file_handler(client: Client, message: types.Message):
         end_request_log()
         concurrency_manager.release(chat_id)
         # Cleanup temp file
-        import os
         try:
-            if 'tmp_path' in dir() and os.path.exists(tmp_path):
+            if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
         except Exception:
             pass

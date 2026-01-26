@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import threading
 from datetime import datetime
 
 from sqlalchemy import Column, Integer, String, Text, DateTime, create_engine
@@ -20,8 +21,6 @@ class VideoCache(Base):
     meta = Column(Text, nullable=False)  # JSON string of metadata
     created_at = Column(DateTime, default=datetime.utcnow)
 
-
-import threading
 
 # Create engine and session factory
 _engine = None

@@ -1,179 +1,232 @@
+<div align="center">
+
 # 📥 Media Downloader Bot
 
-A **personal Telegram bot** for downloading media from popular platforms and delivering it directly to Telegram.
+![Version](https://img.shields.io/badge/version-2.0-blue?style=for-the-badge)
+![Python](https://img.shields.io/badge/python-3.10+-green?style=for-the-badge&logo=python)
+![Telegram](https://img.shields.io/badge/Telegram-Bot-blue?style=for-the-badge&logo=telegram)
+![yt--dlp](https://img.shields.io/badge/yt--dlp-powered-red?style=for-the-badge)
 
-This project is designed for **private use** and as a solid, extensible base for further development.  
-It focuses on reliability, modular architecture, and full in-bot management.
+**בוט טלגרם אישי להורדת מדיה מפלטפורמות פופולריות והעלאה ישירה לטלגרם**
 
----
+[English](#-what-this-bot-does) • [עברית](#-מה-הבוט-עושה)
 
-## 🚀 What This Bot Does
-
-- Accepts links sent via Telegram
-- Automatically detects the source platform
-- Downloads **video or audio**
-- Allows **quality selection** and **audio-only** downloads
-- Sends the media directly back to the user on Telegram
-- Manages users, credits, and limits **inside the bot**
-
-The bot supports multiple users, enforces quotas, and provides full administrative control without external tools.
+</div>
 
 ---
 
-## 🌐 Supported Platforms
+## ✨ תכונות עיקריות
 
-The bot reliably supports downloading from:
-
-- ▶️ YouTube  
-- 🎵 TikTok  
-- 📸 Instagram  
-- 👽 Reddit  
-- 🔗 Direct download links  
-- 🌍 Other websites supported by **yt-dlp**
-
-⚠️ Maximum supported file size: **2 GB**
-
----
-
-## 🎧 Supported Media Types
-
-- 📹 Video downloads  
-- 🎵 Audio-only downloads  
-- 🎚️ Quality selection (when supported by the source)  
-- 📁 Downloads are performed as-is (no forced re-encoding)
+| תכונה | תיאור |
+|--------|--------|
+| 🔗 **זיהוי אוטומטי** | מזהה את הפלטפורמה ומוריד אוטומטית |
+| 🎬 **בחירת איכות** | 1080p / 720p / 480p / 360p / שמע בלבד |
+| 🧲 **הורדת טורנטים** | תמיכה במגנט לינקים וקבצי .torrent (VIP) |
+| 📊 **סרגל התקדמות** | מעקב בזמן אמת עם אנימציית ירח 🌑→🌕 |
+| ✂️ **פיצול קבצים** | פיצול אוטומטי לקבצים מעל 2GB |
+| 💳 **מערכת קרדיטים** | ניהול מכסות ותשלומים מתוך הבוט |
+| 🛡️ **פאנל ניהול** | ניהול משתמשים, חסימות וקרדיטים |
+| ⚡ **הורדה מהירה** | תמיכה ב-aria2 עם 16 חיבורים מקבילים |
+| ❌ **כפתור ביטול** | ביטול הורדות באמצע התהליך |
+| 🔄 **המשך הורדה** | אפשרות להמשיך הורדה שנכשלה |
 
 ---
 
-## ✨ Key Features
+## 🌐 פלטפורמות נתמכות
 
-### Core Features
-- 👥 Multi-user Telegram bot
-- 🎥 Video and audio downloads
-- 🤖 Automatic platform detection
-- 📏 File size limit enforcement (2 GB)
-- 🗃️ Database-backed cache and state handling
-- 📝 Logging and error handling
+<div align="center">
 
-### 🆕 Enhancements Added in This Project
-The following features were added and did not exist in the original upstream project:
+| פלטפורמה | סטטוס | הערות |
+|----------|--------|-------|
+| ▶️ YouTube | ✅ | כולל פלייליסטים |
+| 🎵 TikTok | ✅ | וידאו + תמונות |
+| 📸 Instagram | ✅ | Reels, Stories, Posts |
+| 👽 Reddit | ✅ | וידאו + אודיו |
+| 📁 PixelDrain | ✅ | הורדה ישירה |
+| 🦑 KrakenFiles | ✅ | הורדה ישירה |
+| 🧲 Torrents | ✅ | VIP בלבד |
+| 🔗 Direct Links | ✅ | כל קישור ישיר |
+| 🌍 +1500 אתרים | ✅ | דרך yt-dlp |
 
-- 🧑‍💼 Extended admin panel
-- 💰 Credit management directly from the bot
-- 🎚️ Quality selection and audio-only options
-- 👽 Reddit platform support
-- ✍️ Full rewrite and correction of all UI and user-facing texts
-- 🧭 Improved menu structure and user interaction flow
-- ❌ **Cancel button** – users can cancel downloads mid-progress
-- 🔗 **Improved direct link downloads** – using `curl_cffi` with Chrome TLS fingerprint to bypass CDN protections
-- ⚡ **aria2 support** – optional multi-connection downloads for faster speeds (up to 16 parallel connections)
-- 🔄 **Smart deduplication** – prevents duplicate downloads based on filename, size, and duration
+</div>
 
 ---
 
-## 🗂️ Project Structure
+## 🎨 תכונות ממשק
+
+### 🌙 סרגל התקדמות ירח
+```
+🌕🌕🌕🌕🌖🌑🌑🌑🌑🌑 45%
+```
+
+### 📊 תצוגת הורדה
+```
+📥 מוריד...
+━━━━━━━━━━━━━━━━━━
+🌕🌕🌕🌕🌖🌑🌑🌑🌑🌑 45%
+📊 400MB/900MB
+⚡ מהירות: 15.3MB/s
+⏱️ זמן משוער: 2:30 דקות
+━━━━━━━━━━━━━━━━━━
+```
+
+---
+
+## 📁 מבנה הפרויקט
 
 ```
 media-downloader-bot/
-│
-├─ src/
-│  ├─ main.py              Bot entry point
-│  ├─ admin.py             Admin commands and logic
-│  ├─ engine/              Platform-specific download engines
-│  ├─ database/            Cache and data handling
-│  ├─ config/              Configuration management
-│  └─ utils/               Utility helpers
-│
-├─ assets/                 Images and icons
-├─ requirements.txt        Python dependencies
-├─ run_bot.bat             Windows startup script
-├─ LICENSE                 GPL-3.0 license
-└─ README.md               This file
+├── 📂 src/
+│   ├── 📄 main.py              # נקודת כניסה + handlers
+│   ├── 📄 admin.py             # פאנל ניהול
+│   ├── 📂 engine/              # מנועי הורדה
+│   │   ├── 📄 base.py          # מחלקת בסיס
+│   │   ├── 📄 generic.py       # yt-dlp wrapper
+│   │   ├── 📄 direct.py        # הורדה ישירה
+│   │   ├── 📄 instagram.py     # Instagram handler
+│   │   ├── 📄 tiktok.py        # TikTok handler
+│   │   ├── 📄 reddit.py        # Reddit handler
+│   │   ├── 📄 torrent.py       # Torrent handler
+│   │   └── 📄 ...              # handlers נוספים
+│   ├── 📂 database/            # מודלים ו-cache
+│   ├── 📂 config/              # הגדרות
+│   └── 📂 utils/               # פונקציות עזר
+├── 📂 assets/                  # תמונות ואייקונים
+├── 📄 requirements.txt         # תלויות Python
+├── 📄 run_bot.bat              # הרצה ב-Windows
+├── 📄 LICENSE                  # GPL-3.0
+└── 📄 README.md                # אתה כאן! 👋
 ```
 
 ---
 
-## 🧰 Requirements
+## 🛠️ דרישות מערכת
 
-- 🐍 Python 3.10 or newer
-- 🤖 Telegram Bot Token
-- 🌐 Internet connection
-- ⚙️ yt-dlp available in the environment
-- 🚀 **aria2** (optional, for faster multi-connection downloads)
+- **Python 3.10+**
+- **FFmpeg** מותקן ונגיש ב-PATH
+- **Telegram Bot Token** מ-@BotFather
+- **Telegram API Credentials** מ-my.telegram.org
 
-### Installing aria2 (Optional)
+### תלויות אופציונליות
 
-**Windows:**
-```powershell
-winget install aria2.aria2
-```
-
-**Linux (Debian/Ubuntu):**
-```bash
-sudo apt-get install aria2
-```
-
-**macOS:**
-```bash
-brew install aria2
-```
-
-To enable aria2, set `ENABLE_ARIA2=true` in your `.env` file.
+| כלי | שימוש | התקנה |
+|-----|-------|-------|
+| 🚀 aria2 | הורדה מהירה (16 חיבורים) | `winget install aria2.aria2` |
+| 🧲 qBittorrent | הורדת טורנטים | [qbittorrent.org](https://www.qbittorrent.org/) |
 
 ---
 
-## ▶️ Installation and Usage
+## 🚀 התקנה
 
-1. Clone the repository:
-```
+### 1. שכפל את הפרויקט
+```bash
 git clone https://github.com/Omer-Dahan/media-downloader-bot.git
+cd media-downloader-bot
 ```
 
-2. Install dependencies:
+### 2. צור סביבה וירטואלית
+```bash
+python -m venv venv
+venv\Scripts\activate  # Windows
+source venv/bin/activate  # Linux/Mac
 ```
+
+### 3. התקן תלויות
+```bash
 pip install -r requirements.txt
 ```
 
-3. Create a `.env` file with the required configuration (Telegram token, admin IDs, etc).
+### 4. הגדר את קובץ `.env`
+```env
+# Telegram
+APP_ID=your_app_id
+APP_HASH=your_app_hash
+BOT_TOKEN=your_bot_token
+OWNER=your_telegram_id
 
-4. Run the bot:
+# Database
+DB_DSN=sqlite:///database.sqlite3
+
+# Features (optional)
+ENABLE_VIP=true
+ENABLE_ARIA2=true
+ENABLE_FFMPEG=true
+
+# qBittorrent (optional)
+QBITTORRENT_HOST=localhost
+QBITTORRENT_PORT=8080
+QBITTORRENT_USERNAME=admin
+QBITTORRENT_PASSWORD=adminadmin
 ```
+
+### 5. הפעל את הבוט
+```bash
 python src/main.py
 ```
 
-On Windows:
+---
+
+## 🤖 פקודות זמינות
+
+| פקודה | תיאור |
+|-------|-------|
+| `/start` | התחלה והצגת תפריט ראשי |
+| `/help` | עזרה ומידע נוסף |
+| `/settings` | הגדרות איכות ופורמט |
+| `/stats` | סטטיסטיקות שרת |
+| `/buy` | רכישת קרדיטים |
+| `/torrent` | הורדת טורנט (VIP) |
+| `/direct` | הורדה ישירה מלינק |
+| `/adminpanel` | פאנל ניהול (מנהלים) |
+
+---
+
+## 💳 מערכת הקרדיטים
+
 ```
-run_bot.bat
+1 קרדיט = 200MB
+───────────────────
+קובץ 400MB = 2 קרדיטים
+קובץ 1GB = 5 קרדיטים
+פלייליסט = סכום כל הקבצים
 ```
 
 ---
 
-## 🔐 Security Notes
+## 🔐 אבטחה
 
-- `.env`, cookies, session files, and databases are excluded from the repository
-- Tokens and credentials must be stored securely
-- The operator is responsible for complying with platform terms of service
-
----
-
-## 📜 License
-
-This project is licensed under the **GNU General Public License v3.0**.
-
-Any redistribution or modification must comply with the terms of this license.
+- 🔒 קבצי `.env`, cookies ו-sessions לא נכללים ב-Git
+- 🛡️ טוקנים ונתונים רגישים מאוחסנים בצורה מאובטחת
+- ⚠️ האחריות לציות לתנאי השימוש של הפלטפורמות היא על המפעיל
 
 ---
 
-## 🙏 Credits
+## 📜 רישיון
 
-This project is based on the original work from:  
-ytdlbot  
-https://github.com/tgbot-collection/ytdlbot  
+פרויקט זה מורשה תחת **GNU General Public License v3.0**.
 
-The codebase was modified, extended, and customized with additional features and structural changes.
+כל הפצה או שינוי חייבים לעמוד בתנאי רישיון זה.
 
 ---
 
-## ⚠️ Disclaimer
+## 🙏 קרדיטים
 
-This bot is intended for **lawful use only**.  
-The responsibility for downloaded content and compliance with local laws and platform policies lies solely with the user.
+פרויקט זה מבוסס על:  
+**[ytdlbot](https://github.com/tgbot-collection/ytdlbot)**
+
+הקוד עבר שינויים, הרחבות והתאמות עם תכונות נוספות ושינויים מבניים.
+
+---
+
+## ⚠️ הצהרת אחריות
+
+בוט זה מיועד **לשימוש חוקי בלבד**.  
+האחריות על התוכן המורד ועמידה בחוקים המקומיים ותנאי הפלטפורמות היא על המשתמש בלבד.
+
+---
+
+<div align="center">
+
+**נבנה עם ❤️ על ידי [@YD_IL](https://t.me/YD_IL)**
+
+</div>
