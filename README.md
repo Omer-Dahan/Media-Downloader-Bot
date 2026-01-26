@@ -227,6 +227,7 @@ python src/main.py
 
 <div align="center">
 
-**נבנה עם ❤️ על ידי Omer*
+**Made with ❤️ by Omer**
 
 </div>
+
