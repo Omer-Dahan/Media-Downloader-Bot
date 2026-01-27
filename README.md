@@ -52,6 +52,43 @@
 
 ---
 
+## 🤖 Usage
+
+### 1. Send media link
+Simply paste a link from any supported platform (YouTube, Instagram, TikTok, etc.) into the chat.
+
+### 2. Select Quality
+The bot will analyze the link and present quality options (1080p, 720p, Audio only).
+
+### 3. Get your file
+The bot downloads, processes, and sends the file back to you!
+
+### Workflow
+```mermaid
+graph LR
+    User([👤 User]) -->|Link| Start{🔍 Analyze}
+    
+    Start -->|Social| Fetch[📡 Metadata]
+    Start -->|Direct/Magnet| Direct[🔗 Download]
+    
+    Fetch -->|Select| Options{⚙️ Quality}
+    Options -->|Video/Audio| Engine[⬇️ Engine]
+    
+    Direct --> Engine
+    
+    Engine -->|Progress| Moon[🌑 Animation]
+    Moon --> Done{✅ Done}
+    
+    Done -->|> 2GB| Split[✂️ Split]
+    Done -->|< 2GB| Proc[🏗️ Process]
+    
+    Split & Proc --> Upload[📤 Upload]
+    
+    Upload --> Fin([✨ Sent])
+```
+
+---
+
 ## 🎨 UI Features
 
 ### 🌙 Moon Progress Bar
@@ -212,10 +249,16 @@ The codebase was modified, extended, and customized with additional features and
 
 ---
 
-## ⚠️ Disclaimer
+## ⚠️ Important Notes
 
-This bot is intended for **lawful use only**.  
-Responsibility for downloaded content and compliance with local laws and platform policies lies solely with the user.
+> [!IMPORTANT]
+> **Upload Limits**: Telegram bots are limited to **2GB** per file (4GB for Premium users). Files larger than the limit will be automatically split into chunks.
+
+> [!WARNING]
+> **Copyright**: You are solely responsible for the content you download. Please respect copyright laws and the terms of service of the respective platforms.
+
+> [!NOTE]
+> **Performance**: Download speed depends on the source server and current bot load. VIP users get priority for torrent downloads.
 
 ---
 
