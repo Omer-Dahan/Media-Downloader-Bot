@@ -9,6 +9,7 @@ from engine.krakenfiles import krakenfiles_download
 from engine.reddit import RedditDownload
 from engine.tiktok import TikTokDownload
 from engine.torrent import TorrentDownload
+from engine.jdownloader import JDownloaderDownload
 
 
 def googledrive_disabled(client: Any, bot_message: Any, url: str) -> None:
@@ -91,6 +92,13 @@ def is_magnet_link(text: str) -> bool:
     # Match magnet links with v1 (40 hex) or v2 (64 hex) hashes
     pattern = r'^magnet:\?xt=urn:btih:[a-fA-F0-9]{40,64}'
     return bool(re.match(pattern, text.strip()))
+
+
+# --- Handler for JDownloader2 (last-resort fallback) ---
+def jdownloader_entrance(client: Any, bot_message: Any, url: str) -> None:
+    """Start download via JDownloader2 as last-resort fallback."""
+    dl = JDownloaderDownload(client, bot_message, url)
+    dl.start()
 
 
 DOWNLOADER_MAP: dict[str, Callable[[Any, Any, str], Any]] = {

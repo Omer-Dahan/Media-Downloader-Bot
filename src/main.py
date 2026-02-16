@@ -42,10 +42,10 @@ from database.model import (
     CreditsExhaustedException,
     get_total_credits,
 )
-from engine import direct_entrance, youtube_entrance, youtube_entrance_with_quality, get_youtube_video_info, special_download_entrance, torrent_entrance, is_magnet_link
+from engine import direct_entrance, youtube_entrance, youtube_entrance_with_quality, get_youtube_video_info, special_download_entrance, torrent_entrance, is_magnet_link, jdownloader_entrance
 from engine.base import cancellation_events, _resume_state_cache
 from engine.concurrency import concurrency_manager
-from engine.generic import check_and_send_update_notification
+from engine.generic import check_and_send_update_notification, auto_update_ytdlp
 from utils import extract_url_and_name, sizeof_fmt, timeof_fmt, is_youtube
 from admin import admin_panel_command, admin_callback_handler, admin_text_handler, _admin_state
 
@@ -661,7 +661,12 @@ def download_handler(client: Client, message: types.Message):
         except ValueError as inner_e:
             # No special handler found, fall back to yt-dlp
             if "לא נמצא מוריד" in str(inner_e):
-                youtube_entrance(client, bot_msg, url)
+                try:
+                    youtube_entrance(client, bot_msg, url)
+                except Exception as ytdlp_e:
+                    # Last resort — try JDownloader2
+                    logging.info("yt-dlp failed for %s, trying JDownloader2: %s", url, ytdlp_e)
+                    jdownloader_entrance(client, bot_msg, url)
             # Other ValueErrors are handled by the downloader itself
     except pyrogram.errors.Flood as e:
         report_error_to_archive(client, message.from_user, url, e)
@@ -972,7 +977,15 @@ def youtube_quality_callback(client: Client, callback_query: types.CallbackQuery
     # Start download with selected quality
     try:
         client.send_chat_action(chat_id, enums.ChatAction.UPLOAD_VIDEO)
-        youtube_entrance_with_quality(client, callback_query.message, url, quality)
+        try:
+            youtube_entrance_with_quality(client, callback_query.message, url, quality)
+        except CreditsExhaustedException:
+            raise  # Let outer handler deal with credits
+        except Exception as ytdlp_e:
+            # yt-dlp failed — try JDownloader2 as last resort
+            logging.info("YouTube download failed for %s, trying JDownloader2: %s", url, ytdlp_e)
+            callback_query.message.edit_text("🔧 yt-dlp נכשל, מנסה דרך JDownloader2...")
+            jdownloader_entrance(client, callback_query.message, url)
     except CreditsExhaustedException:
         # User has no credits - show purchase message with button
         markup = types.InlineKeyboardMarkup([
@@ -1082,11 +1095,48 @@ def resume_callback(client: Client, callback_query: types.CallbackQuery):
 
 
 if __name__ == "__main__":
+    # === Prevent duplicate instances ===
+    _LOCKFILE = os.path.join(os.path.dirname(__file__), ".bot.pid")
+    
+    def _kill_old_instance():
+        """Kill any previous bot instance that's still running."""
+        if not os.path.exists(_LOCKFILE):
+            return
+        try:
+            old_pid = int(open(_LOCKFILE).read().strip())
+            if old_pid == os.getpid():
+                return
+            old_proc = psutil.Process(old_pid)
+            # Verify it's actually our bot (not some other process reusing the PID)
+            cmdline = " ".join(old_proc.cmdline())
+            if "main.py" in cmdline:
+                logging.warning("⚠️ Killing old bot instance (PID %d) to prevent database lock", old_pid)
+                # Kill children first (sub-processes)
+                for child in old_proc.children(recursive=True):
+                    child.kill()
+                old_proc.kill()
+                old_proc.wait(timeout=5)
+                logging.info("✅ Old instance killed successfully")
+        except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
+            pass  # Process already gone or can't access
+        except Exception as e:
+            logging.warning("Could not kill old instance: %s", e)
+    
+    _kill_old_instance()
+    
+    # Write our PID
+    with open(_LOCKFILE, "w") as f:
+        f.write(str(os.getpid()))
+    
     botStartTime = time.time()
     scheduler = BackgroundScheduler()
     # Daily reset removed - credits are now persistent
     # scheduler.add_job(reset_free, "cron", hour=0, minute=0)
     scheduler.start()
+    
+    # Auto-update yt-dlp on every startup
+    auto_update_ytdlp()
+    
     banner = f"""
 ▌ ▌         ▀▛▘     ▌       ▛▀▖              ▜            ▌
 ▝▞  ▞▀▖ ▌ ▌  ▌  ▌ ▌ ▛▀▖ ▞▀▖ ▌ ▌ ▞▀▖ ▌  ▌ ▛▀▖ ▐  ▞▀▖ ▝▀▖ ▞▀▌
@@ -1110,6 +1160,20 @@ By @BennyThink, VIP Mode: {ENABLE_VIP}
             check_and_send_update_notification(app)
         except Exception as e:
             logging.error("Failed to send update notification: %s", e)
+        
+        # Check JDownloader2 connection
+        try:
+            from engine.jdownloader_manager import JDownloaderManager, JDownloaderConnectionError
+            from config import JDOWNLOADER_EMAIL
+            if JDOWNLOADER_EMAIL:
+                mgr = JDownloaderManager()
+                logging.info("✅ JDownloader2 API connected successfully")
+            else:
+                logging.info("ℹ️ JDownloader2 not configured (JDOWNLOADER_EMAIL is empty)")
+        except JDownloaderConnectionError as e:
+            logging.warning("⚠️ JDownloader2 connection failed: %s", e)
+        except Exception as e:
+            logging.warning("⚠️ JDownloader2 check failed: %s", e)
     
     threading.Thread(target=send_update_notification_on_startup, daemon=True).start()
     

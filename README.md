@@ -29,6 +29,8 @@
 | ⚡ **Fast Downloads** | aria2 support with 16 parallel connections |
 | ❌ **Cancel Button** | Cancel downloads mid-progress |
 | 🔄 **Resume Downloads** | Resume failed downloads |
+| 🔧 **JDownloader2 Fallback** | Auto-fallback to JDownloader2 for unsupported sites |
+| 🔒 **Process Lock** | Lockfile mechanism to prevent duplicate bot instances |
 
 ---
 
@@ -47,6 +49,7 @@
 | 🧲 Torrents | ✅ | VIP only |
 | 🔗 Direct Links | ✅ | Any direct link |
 | 🌍 +1500 sites | ✅ | Via yt-dlp |
+| 🔧 JDownloader2 | ✅ | Auto-fallback for unsupported sites |
 
 </div>
 
@@ -85,6 +88,9 @@ graph LR
     Split & Proc --> Upload[📤 Upload]
     
     Upload --> Fin([✨ Sent])
+
+    Engine -.->|Failed| JD[🔧 JDownloader2]
+    JD --> Upload
 ```
 
 ---
@@ -124,6 +130,8 @@ media-downloader-bot/
 │   │   ├── 📄 tiktok.py        # TikTok handler
 │   │   ├── 📄 reddit.py        # Reddit handler
 │   │   ├── 📄 torrent.py       # Torrent handler
+│   │   ├── 📄 jdownloader.py   # JDownloader2 handler
+│   │   ├── 📄 jdownloader_manager.py # JDownloader2 API
 │   │   └── 📄 ...              # More handlers
 │   ├── 📂 database/            # Models & cache
 │   ├── 📂 config/              # Configuration
@@ -141,6 +149,7 @@ media-downloader-bot/
 
 - **Python 3.10+**
 - **FFmpeg** installed and in PATH
+- **Node.js** installed and in PATH (required by yt-dlp for YouTube signature solving)
 - **Telegram Bot Token** from @BotFather
 - **Telegram API Credentials** from my.telegram.org
 
@@ -150,6 +159,7 @@ media-downloader-bot/
 |------|-------|--------------|
 | 🚀 aria2 | Fast downloads (16 connections) | `winget install aria2.aria2` |
 | 🧲 qBittorrent | Torrent downloads | [qbittorrent.org](https://www.qbittorrent.org/) |
+| 🔧 JDownloader2 | Fallback for unsupported sites | [jdownloader.org](https://jdownloader.org/) |
 
 ---
 
@@ -188,6 +198,11 @@ DB_DSN=sqlite:///database.sqlite3
 ENABLE_VIP=true
 ENABLE_ARIA2=true
 ENABLE_FFMPEG=true
+
+# JDownloader2 (optional)
+JDOWNLOADER_EMAIL=your_jdownloader_email
+JDOWNLOADER_PASSWORD=your_jdownloader_password
+JDOWNLOADER_DEVICE_NAME=your_device_name
 ```
 
 ### 5. Run the bot

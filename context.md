@@ -12,6 +12,7 @@ This project is a Telegram Bot designed to download media from various platforms
     - **`__init__.py`**: Acts as a dispatcher, mapping URLs/domains to specific downloaders from the module.
     - **`concurrency.py`**: Manages download slots per user (limits concurrent tasks).
     - **Specific Downloaders**: `direct.py`, `googledrive.py`, `instagram.py`, `tiktok.py`, `torrent.py`, `youtube.py` (via `generic.py`), etc. implementation of specific logic.
+    - **JDownloader2**: `jdownloader.py` + `jdownloader_manager.py` — Last-resort fallback via my.jdownloader.org API. When all other engines fail, any URL is sent to JDownloader2 for download.
   - **`database/`**: Database interactions.
     - **`model.py`**: Defines SQLAlchemy models (`User`, `Setting`, `Payment`) and helper functions for quota/credits management.
   - **`config/`**: Configuration constants (loaded from `.env`).

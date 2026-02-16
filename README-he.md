@@ -29,6 +29,8 @@
 | ⚡ **הורדה מהירה** | תמיכה ב-aria2 עם 16 חיבורים מקבילים |
 | ❌ **כפתור ביטול** | ביטול הורדות באמצע התהליך |
 | 🔄 **המשך הורדה** | אפשרות להמשיך הורדה שנכשלה |
+| 🔧 **JDownloader2 גיבוי** | ניסיון אוטומטי דרך JDownloader לאתרים לא נתמכים |
+| 🔒 **מניעת כפילויות** | מנגנון נעילה (lockfile) למניעת הרצת תהליכים כפולים |
 
 ---
 
@@ -47,6 +49,7 @@
 | 🧲 Torrents | ✅ | VIP בלבד |
 | 🔗 Direct Links | ✅ | כל קישור ישיר |
 | 🌍 +1500 אתרים | ✅ | דרך yt-dlp |
+| 🔧 JDownloader2 | ✅ | גיבוי אוטומטי לאתרים לא נתמכים |
 
 </div>
 
@@ -85,6 +88,9 @@ graph LR
     Split & Proc --> Upload[📤 העלאה]
     
     Upload --> Fin([✨ נשלח])
+
+    Engine -.->|נכשל| JD[🔧 JDownloader2]
+    JD --> Upload
 ```
 
 ---
@@ -124,6 +130,8 @@ media-downloader-bot/
 │   │   ├── 📄 tiktok.py        # TikTok handler
 │   │   ├── 📄 reddit.py        # Reddit handler
 │   │   ├── 📄 torrent.py       # Torrent handler
+│   │   ├── 📄 jdownloader.py   # JDownloader2 handler
+│   │   ├── 📄 jdownloader_manager.py # JDownloader2 API
 │   │   └── 📄 ...              # handlers נוספים
 │   ├── 📂 database/            # מודלים ו-cache
 │   ├── 📂 config/              # הגדרות
@@ -141,6 +149,7 @@ media-downloader-bot/
 
 - **Python 3.10+**
 - **FFmpeg** מותקן ונגיש ב-PATH
+- **Node.js** מותקן ונגיש ב-PATH (נדרש עבור yt-dlp)
 - **Telegram Bot Token** מ-@BotFather
 - **Telegram API Credentials** מ-my.telegram.org
 
@@ -150,6 +159,7 @@ media-downloader-bot/
 |-----|-------|-------|
 | 🚀 aria2 | הורדה מהירה (16 חיבורים) | `winget install aria2.aria2` |
 | 🧲 qBittorrent | הורדת טורנטים | [qbittorrent.org](https://www.qbittorrent.org/) |
+| 🔧 JDownloader2 | גיבוי לאתרים לא נתמכים | [jdownloader.org](https://jdownloader.org/) |
 
 ---
 
@@ -188,6 +198,11 @@ DB_DSN=sqlite:///database.sqlite3
 ENABLE_VIP=true
 ENABLE_ARIA2=true
 ENABLE_FFMPEG=true
+
+# JDownloader2 (אופציונלי)
+JDOWNLOADER_EMAIL=your_jdownloader_email
+JDOWNLOADER_PASSWORD=your_jdownloader_password
+JDOWNLOADER_DEVICE_NAME=your_device_name
 ```
 
 ### 5. הפעל את הבוט

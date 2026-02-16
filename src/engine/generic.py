@@ -23,6 +23,26 @@ _ytdlp_update_attempted = False
 UPDATE_FLAG_FILE = _SCRIPT_DIR / ".ytdlp_updated"
 
 
+def _ensure_node_in_path():
+    """Ensure Node.js is in PATH for yt-dlp."""
+    import shutil
+    
+    # Check if node is already available
+    if shutil.which("node"):
+        return
+
+    # Check common Windows install location
+    node_path = Path(r"C:\Program Files\nodejs")
+    if node_path.exists() and (node_path / "node.exe").exists():
+        logging.info("Found Node.js at %s, adding to PATH for yt-dlp", node_path)
+        os.environ["PATH"] += os.pathsep + str(node_path)
+    else:
+        logging.warning("Node.js not found in PATH or standard location. YouTube downloads might be slower or fail.")
+
+# Run this check immediately when module loads
+_ensure_node_in_path()
+
+
 def get_ytdlp_version() -> str:
     """Get the current installed version of yt-dlp."""
     try:
@@ -81,6 +101,47 @@ def save_update_info(old_version: str, new_version: str):
         logging.info("Saved update info to %s", UPDATE_FLAG_FILE)
     except Exception as e:
         logging.error("Failed to save update info: %s", e)
+
+
+def auto_update_ytdlp() -> bool:
+    """Check for and install yt-dlp updates automatically on startup.
+    
+    Returns True if an update was installed, False otherwise.
+    """
+    current_version = get_ytdlp_version()
+    logging.info("🔍 Checking for yt-dlp updates (current: %s)...", current_version)
+    
+    try:
+        # Use pip install --upgrade to check and install in one step
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
+            capture_output=True,
+            text=True,
+            timeout=120  # 2 minutes timeout for download+install
+        )
+        
+        output = result.stdout + result.stderr
+        
+        # Check if an actual update happened (pip says "Successfully installed")
+        if "Successfully installed" in output and "yt-dlp" in output:
+            # Extract new version from pip output
+            import re
+            version_match = re.search(r"yt-dlp-(\S+)", output)
+            new_version = version_match.group(1) if version_match else "unknown"
+            
+            logging.info("✅ yt-dlp updated: %s → %s", current_version, new_version)
+            save_update_info(current_version, new_version)
+            return True
+        else:
+            logging.info("✅ yt-dlp is up to date (%s)", current_version)
+            return False
+            
+    except subprocess.TimeoutExpired:
+        logging.warning("⚠️ yt-dlp update check timed out")
+        return False
+    except Exception as e:
+        logging.error("❌ Failed to update yt-dlp: %s", e)
+        return False
 
 
 def check_and_send_update_notification(client):
@@ -240,6 +301,9 @@ class YoutubeDownload(BaseDownloader):
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
+            # Enable Node.js runtime for YouTube JS challenge solving
+            'js_runtimes': {'node': {}},
+            'remote_components': {'ejs:github': {}},
         }
         # Setup cookies for youtube
         if COOKIES_PATH.exists() and COOKIES_PATH.stat().st_size > 100:
@@ -373,6 +437,9 @@ class YoutubeDownload(BaseDownloader):
             "merge_output_format": "mp4",
             # Skip private/unavailable videos in playlists instead of failing
             "ignoreerrors": True,
+            # Enable Node.js runtime for YouTube JS challenge solving (signature + n parameter)
+            "js_runtimes": {"node": {}},
+            "remote_components": {"ejs:github": {}},
         }
         
         # Use pre-calculated playlist limit from _start (to avoid repeated DB queries)
@@ -423,6 +490,10 @@ class YoutubeDownload(BaseDownloader):
                 # ydl_opts["extractor_args"] = {
                 #     "youtube": [f"po_token=web.player+{potoken}", f"po_token=web.gvs+{potoken}"]
                 # }
+            else:
+                # Use web client - android client has been blocked by Google.
+                # The updated yt-dlp handles the 'n' challenge natively for web client.
+                ydl_opts["extractor_args"] = {"youtube": ["player-client=web,default"]}
         else:
             # For non-YouTube sites, use impersonate to bypass Cloudflare and other anti-bot measures
             # This requires curl_cffi to be installed (yt-dlp[curl-cffi])

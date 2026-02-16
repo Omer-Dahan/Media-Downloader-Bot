@@ -1,5 +1,9 @@
+import os
+import sys
 import time
+import subprocess
 import logging
+import threading
 from pyrogram import Client, filters, types
 
 from config import OWNER
@@ -43,6 +47,7 @@ def admin_panel_command(client: Client, message: types.Message):
         [types.InlineKeyboardButton("➕ הוסף קרדיטים", callback_data="admin:add_credits")],
         [types.InlineKeyboardButton("🔄 אפס מכסה", callback_data="admin:reset_quota")],
         [types.InlineKeyboardButton("🚫 חסום משתמש", callback_data="admin:block_user")],
+        [types.InlineKeyboardButton("⬆️ עדכון yt-dlp והפעלה מחדש", callback_data="admin:update_ytdlp")],
     ])
     
     message.reply_text(
@@ -86,6 +91,10 @@ def admin_callback_handler(client: Client, callback_query: types.CallbackQuery):
         target_user = int(parts[2]) if len(parts) > 2 else 0
         sub_action = parts[3] if len(parts) > 3 else ""
         handle_user_action(client, callback_query, target_user, sub_action)
+    elif action == "update_ytdlp":
+        handle_update_ytdlp(client, callback_query)
+    elif action == "update_ytdlp_confirm":
+        handle_update_ytdlp_confirm(client, callback_query)
     elif action == "back":
         handle_back_to_menu(client, callback_query)
 
@@ -399,6 +408,7 @@ def handle_back_to_menu(client: Client, callback_query: types.CallbackQuery):
         [types.InlineKeyboardButton("➕ הוסף קרדיטים", callback_data="admin:add_credits")],
         [types.InlineKeyboardButton("🔄 אפס מכסה", callback_data="admin:reset_quota")],
         [types.InlineKeyboardButton("🚫 חסום משתמש", callback_data="admin:block_user")],
+        [types.InlineKeyboardButton("⬆️ עדכון yt-dlp והפעלה מחדש", callback_data="admin:update_ytdlp")],
     ])
     
     callback_query.message.edit_text(
@@ -458,4 +468,97 @@ def admin_text_handler(client: Client, message: types.Message):
             message.reply_text("❌ User ID לא תקין", quote=True)
         finally:
             _admin_state.pop(user_id, None)
+
+
+def handle_update_ytdlp(client: Client, callback_query: types.CallbackQuery):
+    """Show update confirmation with current version info."""
+    callback_query.answer()
+    
+    from engine.generic import get_ytdlp_version
+    current_version = get_ytdlp_version()
+    
+    callback_query.message.edit_text(
+        f"⬆️ **עדכון yt-dlp והפעלה מחדש**\n\n"
+        f"📦 גרסה נוכחית: `{current_version}`\n\n"
+        f"⚠️ **שים לב:** הבוט יכבה לרגע ויעלה מחדש.\n"
+        f"הורדות פעילות יופסקו.\n\n"
+        f"להמשיך?",
+        reply_markup=types.InlineKeyboardMarkup([
+            [types.InlineKeyboardButton("✅ כן, עדכן והפעל מחדש", callback_data="admin:update_ytdlp_confirm")],
+            [types.InlineKeyboardButton("🔙 חזרה", callback_data="admin:back")]
+        ])
+    )
+
+
+def handle_update_ytdlp_confirm(client: Client, callback_query: types.CallbackQuery):
+    """Actually update yt-dlp and restart the bot."""
+    callback_query.answer("מעדכן...")
+    
+    from engine.generic import get_ytdlp_version, save_update_info
+    old_version = get_ytdlp_version()
+    
+    # Show progress
+    callback_query.message.edit_text(
+        f"⏳ **מעדכן yt-dlp...**\n\n"
+        f"📦 גרסה נוכחית: `{old_version}`\n"
+        f"⏳ מוריד ומתקין עדכון..."
+    )
+    
+    try:
+        # Run pip upgrade
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        
+        output = result.stdout + result.stderr
+        
+        if "Successfully installed" in output and "yt-dlp" in output:
+            # Extract new version
+            import re
+            version_match = re.search(r"yt-dlp-(\S+)", output)
+            new_version = version_match.group(1) if version_match else "unknown"
+            
+            save_update_info(old_version, new_version)
+            
+            callback_query.message.edit_text(
+                f"✅ **yt-dlp עודכן בהצלחה!**\n\n"
+                f"📦 `{old_version}` → `{new_version}`\n\n"
+                f"🔄 הבוט מופעל מחדש עכשיו..."
+            )
+        else:
+            callback_query.message.edit_text(
+                f"✅ **yt-dlp כבר מעודכן** (`{old_version}`)\n\n"
+                f"🔄 מפעיל מחדש בכל זאת..."
+            )
+        
+        logging.info("🔄 Bot restart requested from admin panel")
+        
+        # Restart the bot process after a short delay
+        def restart_bot():
+            time.sleep(2)  # Give time for the message to be sent
+            logging.info("Restarting bot process...")
+            # Use subprocess.Popen instead of os.execv to handle Windows paths with spaces
+            subprocess.Popen([sys.executable] + sys.argv)
+            os._exit(0)
+        
+        threading.Thread(target=restart_bot, daemon=True).start()
+        
+    except subprocess.TimeoutExpired:
+        callback_query.message.edit_text(
+            "❌ **העדכון נכשל** — timeout\n\nהעדכון לקח יותר מדי זמן.",
+            reply_markup=types.InlineKeyboardMarkup([
+                [types.InlineKeyboardButton("🔙 חזרה", callback_data="admin:back")]
+            ])
+        )
+    except Exception as e:
+        logging.error("Failed to update yt-dlp from admin panel: %s", e)
+        callback_query.message.edit_text(
+            f"❌ **העדכון נכשל**\n\nשגיאה: `{e}`",
+            reply_markup=types.InlineKeyboardMarkup([
+                [types.InlineKeyboardButton("🔙 חזרה", callback_data="admin:back")]
+            ])
+        )
 
