@@ -131,7 +131,7 @@ class BaseDownloader(ABC):
         progress_bar = moon_progress_bar(percent)
         
         # Format file size progress
-        from engine.helper import sizeof_fmt
+
         size_progress = f"{sizeof_fmt(finished)}/{sizeof_fmt(total)}"
         
         # Modern RTL style progress display with circle bar
@@ -481,14 +481,8 @@ class BaseDownloader(ABC):
                 media_group_id = getattr(success, 'media_group_id', None)
             
             # Get user info
-            user_info = get_user_stats(self._from_user)
-            if user_info:
-                name = user_info.get('first_name') or ""
-                if user_info.get('username'):
-                    name = f"{name} @{user_info['username']}".strip()
-                user_display = name if name else str(self._from_user)
-            else:
-                user_display = str(self._from_user)
+            from engine.helper import get_user_display_name
+            user_display = get_user_display_name(self._from_user)
             
             # Get filename
             filename = "Unknown"
@@ -732,14 +726,8 @@ class BaseDownloader(ABC):
                 from database.model import get_user_stats
                 
                 # Get user info
-                user_info = get_user_stats(self._from_user)
-                if user_info:
-                    name = user_info.get('first_name') or ""
-                    if user_info.get('username'):
-                        name = f"{name} @{user_info['username']}".strip()
-                    user_display = name if name else str(self._from_user)
-                else:
-                    user_display = str(self._from_user)
+                from engine.helper import get_user_display_name
+                user_display = get_user_display_name(self._from_user)
                 
                 for msg in sent_messages:
                     original_caption = msg.caption or ""

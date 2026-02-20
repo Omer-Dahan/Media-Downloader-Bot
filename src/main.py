@@ -46,7 +46,8 @@ from engine import direct_entrance, youtube_entrance, youtube_entrance_with_qual
 from engine.base import cancellation_events, _resume_state_cache
 from engine.concurrency import concurrency_manager
 from engine.generic import check_and_send_update_notification, auto_update_ytdlp
-from utils import extract_url_and_name, sizeof_fmt, timeof_fmt, is_youtube
+from utils import extract_url_and_name, is_youtube, format_system_stats
+from engine.helper import sizeof_fmt
 from admin import admin_panel_command, admin_callback_handler, admin_text_handler, _admin_state
 
 # Temporary storage for YouTube URLs (maps hash to URL)
@@ -289,104 +290,15 @@ def stats_handler(client: Client, message: types.Message):
     init_user(chat_id)
     client.send_chat_action(chat_id, enums.ChatAction.TYPING)
 
-    def safe(func, *args):
-        try:
-            return func(*args)
-        except Exception:
-            return None
-
-    cpu_usage = safe(psutil.cpu_percent)
-    disk_usage = safe(psutil.disk_usage, "/")
-    swap = safe(psutil.swap_memory)
-    memory = safe(psutil.virtual_memory)
-    net_io = safe(psutil.net_io_counters)
-    boot_time = safe(psutil.boot_time)
-
-    # CPU
-    cpu_str = f"{cpu_usage}%" if cpu_usage is not None else "N/A"
-
-    # Disk
-    if disk_usage:
-        total, used, free, disk_percent = disk_usage
-        total_str = sizeof_fmt(total)
-        used_str = sizeof_fmt(used)
-        free_str = sizeof_fmt(free)
-        disk_percent_str = f"{disk_percent}%"
-    else:
-        total_str = used_str = free_str = disk_percent_str = "N/A"
-
-    # Memory
-    if memory:
-        mem_total = sizeof_fmt(memory.total)
-        mem_free = sizeof_fmt(memory.available)
-        mem_used = sizeof_fmt(memory.used)
-        mem_percent = f"{memory.percent}%"
-    else:
-        mem_total = mem_free = mem_used = mem_percent = "N/A"
-
-    # Swap
-    if swap:
-        swap_total = sizeof_fmt(swap.total)
-        swap_percent = f"{swap.percent}%"
-    else:
-        swap_total = swap_percent = "N/A"
-
-    # Net IO
-    if net_io:
-        sent = sizeof_fmt(net_io.bytes_sent)
-        recv = sizeof_fmt(net_io.bytes_recv)
-    else:
-        sent = recv = "N/A"
-
-    # Uptime
-    bot_uptime = timeof_fmt(time.time() - botStartTime)
-    os_uptime = timeof_fmt(time.time() - boot_time) if boot_time else "N/A"
-
-    # Cores
     try:
-        p_cores = psutil.cpu_count(logical=False) or "N/A"
-        t_cores = psutil.cpu_count(logical=True) or "N/A"
-    except Exception:
-        p_cores = t_cores = "N/A"
-
-    owner_stats = (
-        "\n\n⌬─────「 סטטיסטיקות 」─────⌬\n\n"
-        f"<b>╭🖥️ **שימוש במעבד »**</b>  __{cpu_str}__\n"
-        f"<b>├💾 **שימוש בזיכרון »**</b>  __{mem_percent}__\n"
-        f"<b>╰🗃️ **שימוש בדיסק »**</b>  __{disk_percent_str}__\n\n"
-        f"<b>╭📤העלאה:</b> {sent}\n"
-        f"<b>╰📥הורדה:</b> {recv}\n\n\n"
-        f"<b>סה״כ זיכרון:</b> {mem_total}\n"
-        f"<b>זיכרון פנוי:</b> {mem_free}\n"
-        f"<b>זיכרון בשימוש:</b> {mem_used}\n"
-        f"<b>סה״כ SWAP:</b> {swap_total} | <b>שימוש ב-SWAP:</b> {swap_percent}\n\n"
-        f"<b>סה״כ שטח דיסק:</b> {total_str}\n"
-        f"<b>בשימוש:</b> {used_str} | <b>פנוי:</b> {free_str}\n\n"
-        f"<b>ליבות פיזיות:</b> {p_cores}\n"
-        f"<b>סה״כ ליבות:</b> {t_cores}\n\n"
-        f"<b>🤖זמן פעילות הבוט:</b> {bot_uptime}\n"
-        f"<b>⏲️זמן פעילות המערכת:</b> {os_uptime}\n"
-    )
-
-    user_stats = (
-        "\n\n⌬─────「 סטטיסטיקות 」─────⌬\n\n"
-        f"<b>╭🖥️ **שימוש במעבד »**</b>  __{cpu_str}__\n"
-        f"<b>├💾 **שימוש בזיכרון »**</b>  __{mem_percent}__\n"
-        f"<b>╰🗃️ **שימוש בדיסק »**</b>  __{disk_percent_str}__\n\n"
-        f"<b>╭📤העלאה:</b> {sent}\n"
-        f"<b>╰📥הורדה:</b> {recv}\n\n\n"
-        f"<b>סה״כ זיכרון:</b> {mem_total}\n"
-        f"<b>זיכרון פנוי:</b> {mem_free}\n"
-        f"<b>זיכרון בשימוש:</b> {mem_used}\n"
-        f"<b>סה״כ שטח דיסק:</b> {total_str}\n"
-        f"<b>בשימוש:</b> {used_str} | <b>פנוי:</b> {free_str}\n\n"
-        f"<b>🤖זמן פעילות הבוט:</b> {bot_uptime}\n"
-    )
-
-    if message.from_user.id in OWNER:
-        message.reply_text(owner_stats, quote=True)
-    else:
-        message.reply_text(user_stats, quote=True)
+        from database.model import is_admin
+        owner_stats, user_stats = format_system_stats(botStartTime)
+        if message.from_user.id in OWNER:
+            message.reply_text(owner_stats, quote=True)
+        else:
+            message.reply_text(user_stats, quote=True)
+    except Exception as e:
+        message.reply_text(f"❌ שגיאה: {e}", quote=True)
 
 
 @app.on_message(filters.command(["settings"]))

@@ -6,7 +6,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-import gdown
 
 from engine.base import BaseDownloader
 

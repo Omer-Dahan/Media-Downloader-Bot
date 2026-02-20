@@ -21,7 +21,6 @@ from config import (
     QBITTORRENT_PORT,
     QBITTORRENT_USERNAME,
     QBITTORRENT_PASSWORD,
-    TORRENT_MAX_PER_USER,
     TORRENT_MAX_GLOBAL,
 )
 
@@ -240,12 +239,7 @@ class TorrentManager:
         # Complete states: uploading, stalledUP, pausedUP, forcedUP, queuedUP
         return status.get("state", "").endswith("UP") or status.get("progress", 0) >= 100
     
-    def is_stalled(self, torrent_hash: str) -> bool:
-        """Check if torrent is stalled (no seeds, no progress)."""
-        status = self.get_status(torrent_hash)
-        state = status.get("state", "")
-        # Stalled states
-        return state in ("stalledDL", "metaDL", "missingFiles", "error")
+
     
     def get_output_path(self, torrent_hash: str) -> Path | None:
         """
@@ -298,16 +292,3 @@ class TorrentManager:
             # Always unregister from tracking
             self._unregister_torrent(user_id)
     
-    def pause_torrent(self, torrent_hash: str):
-        """Pause a torrent download."""
-        try:
-            self._client.torrents_pause(torrent_hashes=torrent_hash)
-        except Exception as e:
-            logging.error("Failed to pause torrent: %s", e)
-    
-    def resume_torrent(self, torrent_hash: str):
-        """Resume a paused torrent."""
-        try:
-            self._client.torrents_resume(torrent_hashes=torrent_hash)
-        except Exception as e:
-            logging.error("Failed to resume torrent: %s", e)

@@ -52,20 +52,9 @@ class InstagramDownload(BaseDownloader):
 
     def _download_with_ytdlp(self) -> list:
         """Download Instagram content using yt-dlp."""
-        output = pathlib.Path(self._tempdir.name, "%(title).70s.%(ext)s").as_posix()
-        ydl_opts = {
-            "outtmpl": output,
-            "quiet": True,
-            "no_warnings": True,
-            "merge_output_format": "mp4",
-            "format": "best[ext=mp4]/best",
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
-            "retries": 3,
-            "fragment_retries": 3,
-            "progress_hooks": [self._ytdlp_progress_hook],
-        }
+        from engine.generic import get_base_ytdlp_opts
+        ydl_opts = get_base_ytdlp_opts(self._tempdir.name)
+        ydl_opts["progress_hooks"] = [self._ytdlp_progress_hook]
         
         # Add cookies if configured
         if INSTAGRAM_COOKIES_FILE:
@@ -215,15 +204,8 @@ class InstagramDownload(BaseDownloader):
         # Send error report to archive channel
         if ARCHIVE_CHANNEL:
             try:
-                from database.model import get_user_stats
-                user_info = get_user_stats(self._from_user)
-                if user_info:
-                    name = user_info.get('first_name') or ""
-                    if user_info.get('username'):
-                        name = f"{name} @{user_info['username']}".strip()
-                    user_display = name if name else str(self._from_user)
-                else:
-                    user_display = str(self._from_user)
+                from engine.helper import get_user_display_name
+                user_display = get_user_display_name(self._from_user)
 
                 report = (
                     f"❌ **דיווח שגיאה**\n"
@@ -245,16 +227,8 @@ class InstagramDownload(BaseDownloader):
     def _get_archive_caption(self, files: list) -> str:
         """Create custom archive caption for Instagram."""
         from pathlib import Path
-        from database.model import get_user_stats
-
-        user_info = get_user_stats(self._from_user)
-        if user_info:
-            name = user_info.get('first_name') or ""
-            if user_info.get('username'):
-                name = f"{name} @{user_info['username']}".strip()
-            user_display = name if name else str(self._from_user)
-        else:
-            user_display = str(self._from_user)
+        from engine.helper import get_user_display_name
+        user_display = get_user_display_name(self._from_user)
 
         filename = "Unknown"
         if files and len(files) > 0:

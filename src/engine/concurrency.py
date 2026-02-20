@@ -1,6 +1,6 @@
 import logging
 import threading
-from typing import Dict, Set
+from typing import Dict
 
 from database.model import get_total_credits, OWNER
 

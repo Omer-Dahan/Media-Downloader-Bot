@@ -22,7 +22,6 @@ from config import (
     JDOWNLOADER_PASSWORD,
     JDOWNLOADER_DEVICE_NAME,
     JDOWNLOADER_DOWNLOAD_DIR,
-    JDOWNLOADER_MAX_PER_USER,
     JDOWNLOADER_MAX_GLOBAL,
 )
 
@@ -342,17 +341,6 @@ class JDownloaderManager:
         name = (link.get("name") or "").lower()
         return any(name.endswith(ext) for ext in cls.JUNK_EXTENSIONS)
 
-    def _move_linkgrabber_to_downloads(self):
-        """Move all packages from linkgrabber to downloads list."""
-        try:
-            lg_packages = self._device.linkgrabber.query_packages()
-            if lg_packages:
-                package_ids = [p.get("uuid") for p in lg_packages if p.get("uuid")]
-                if package_ids:
-                    self._device.linkgrabber.move_to_downloadlist(package_ids=package_ids)
-                    logging.info("Moved %d packages from linkgrabber to downloads", len(package_ids))
-        except Exception as e:
-            logging.error("Error moving linkgrabber to downloads: %s", e)
 
     def get_status(self, package_id: int) -> dict[str, Any]:
         """
@@ -445,11 +433,7 @@ class JDownloaderManager:
         status = self.get_status(package_id)
         return status.get("state") == "finished" or status.get("progress", 0) >= 100
 
-    def is_stalled(self, package_id: int) -> bool:
-        """Check if download is stalled (no progress, not running)."""
-        status = self.get_status(package_id)
-        state = status.get("state", "")
-        return state in ("waiting", "error", "missing")
+
 
     def get_output_path(self, package_id: int) -> Path | None:
         """
@@ -516,14 +500,4 @@ class JDownloaderManager:
         finally:
             self._unregister_download(user_id)
 
-    def cleanup_finished(self, package_id: int):
-        """Remove a finished package from JDownloader's download list."""
-        try:
-            self._device.downloads.cleanup(
-                action="DELETE_ALL",
-                mode="REMOVE_LINKS_AND_DELETE_FILES",
-                selection_type="NONE",
-                package_ids=[package_id]
-            )
-        except Exception as e:
-            logging.error("Failed to cleanup JD package %s: %s", package_id, e)
+

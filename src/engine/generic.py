@@ -10,6 +10,7 @@ from config import AUDIO_FORMAT, ARCHIVE_CHANNEL, ENABLE_ARIA2
 from utils import is_youtube
 from database.model import get_format_settings, get_quality_settings, get_total_credits, CreditsExhaustedException
 from engine.base import BaseDownloader
+from engine.helper import extract_title_from_info
 from engine.network_errors import NetworkError, is_network_error, YTDLP_NETWORK_PATTERNS
 
 # Get absolute path to cookies file (relative to src directory)
@@ -105,6 +106,39 @@ def save_update_info(old_version: str, new_version: str):
         logging.error("Failed to save update info: %s", e)
 
 
+def get_base_ytdlp_opts(tempdir_name: str) -> dict:
+    """Returns the base yt-dlp options generally used across extraction helpers."""
+    import pathlib
+    output = pathlib.Path(tempdir_name, "%(title).70s.%(ext)s").as_posix()
+    return {
+        "outtmpl": output,
+        "quiet": True,
+        "no_warnings": True,
+        "merge_output_format": "mp4",
+        "format": "best[ext=mp4]/best",
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+        "retries": 3,
+        "fragment_retries": 3,
+    }
+
+def run_ytdlp_pip_upgrade() -> tuple[bool, str]:
+    """Runs pip install --upgrade yt-dlp.
+    Returns (success_bool, pip_output_string)."""
+    import subprocess
+    import sys
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
+        capture_output=True,
+        text=True,
+        timeout=120  # 2 minutes timeout for download+install
+    )
+    output = result.stdout + result.stderr
+    is_success = "Successfully installed" in output and "yt-dlp" in output
+    return is_success, output
+
+
 def auto_update_ytdlp() -> bool:
     """Check for and install yt-dlp updates automatically on startup.
     
@@ -114,18 +148,10 @@ def auto_update_ytdlp() -> bool:
     logging.info("🔍 Checking for yt-dlp updates (current: %s)...", current_version)
     
     try:
-        # Use pip install --upgrade to check and install in one step
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
-            capture_output=True,
-            text=True,
-            timeout=120  # 2 minutes timeout for download+install
-        )
-        
-        output = result.stdout + result.stderr
+        is_success, output = run_ytdlp_pip_upgrade()
         
         # Check if an actual update happened (pip says "Successfully installed")
-        if "Successfully installed" in output and "yt-dlp" in output:
+        if is_success:
             # Extract new version from pip output
             import re
             version_match = re.search(r"yt-dlp-(\S+)", output)
@@ -516,13 +542,9 @@ class YoutubeDownload(BaseDownloader):
                     # Use extract_info with download=True to get title and download in one operation
                     info = ydl.extract_info(self._url, download=True)
                     if info:
-                        # Get all possible title fields and choose the longest one
-                        title_field = info.get('title', '') or ''
-                        desc_field = info.get('description', '') or ''
-                        fulltitle_field = info.get('fulltitle', '') or ''
-                        title = max([title_field, desc_field, fulltitle_field], key=len)
+                        title = extract_title_from_info(info)
                         if title:
-                            self._video_title = title[:500]
+                            self._video_title = title
                             logging.info("Extracted title (%d chars): %s", len(title), title[:100] if len(title) > 100 else title)
                 # Get media files only - exclude .part files, thumbnails, and subtitle files
                 # Thumbnails (.jpg, .webp) should not count as successful downloads

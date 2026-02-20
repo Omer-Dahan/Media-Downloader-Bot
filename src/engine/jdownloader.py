@@ -23,29 +23,11 @@ from engine.jdownloader_manager import (
     JDownloaderConcurrencyError,
 )
 from engine.archive_manager import needs_archive, create_zip, create_split_archive, split_file
+from engine.helper import moon_progress_bar, sizeof_fmt
+from utils import timeof_fmt
 
 
-def sizeof_fmt(num: int) -> str:
-    """Format bytes to human readable string."""
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(num) < 1024:
-            return f"{num:.1f}{unit}"
-        num /= 1024
-    return f"{num:.1f}PB"
 
-
-def eta_fmt(seconds: int) -> str:
-    """Format seconds to human readable ETA."""
-    if seconds < 0:
-        return "∞"
-    if seconds < 60:
-        return f"{seconds}s"
-    if seconds < 3600:
-        m, s = divmod(seconds, 60)
-        return f"{int(m)}m {int(s)}s"
-    h, remainder = divmod(seconds, 3600)
-    m, _ = divmod(remainder, 60)
-    return f"{int(h)}h {int(m)}m"
 
 
 class JDownloaderDownload(BaseDownloader):
@@ -101,7 +83,6 @@ class JDownloaderDownload(BaseDownloader):
         state_text = state_hebrew.get(state, state)
 
         # Progress bar (moon phases)
-        from engine.helper import moon_progress_bar
         bar = moon_progress_bar(progress)
 
         # Format sizes
@@ -111,7 +92,7 @@ class JDownloaderDownload(BaseDownloader):
         if speed > 0:
             self._last_speed = speed
         
-        eta_str = eta_fmt(eta) if eta > 0 else ""
+        eta_str = timeof_fmt(eta) if eta > 0 else ""
 
         def more(title, value):
             return f"{title} {value}" if value else ""

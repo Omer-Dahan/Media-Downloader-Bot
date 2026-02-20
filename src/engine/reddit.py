@@ -5,6 +5,7 @@ import yt_dlp
 
 from RedDownloader import RedDownloader as RD
 from engine.base import BaseDownloader
+from engine.helper import extract_title_from_info
 
 
 class RedditDownload(BaseDownloader):
@@ -34,31 +35,25 @@ class RedditDownload(BaseDownloader):
 
     def _download_with_ytdlp(self, url: str) -> list:
         """Fallback download using yt-dlp with Reddit-specific headers."""
-        output = pathlib.Path(self._tempdir.name, "%(title).70s.%(ext)s").as_posix()
-        ydl_opts = {
-            "outtmpl": output,
-            "quiet": True,
-            "no_warnings": True,
+        from engine.generic import get_base_ytdlp_opts
+        ydl_opts = get_base_ytdlp_opts(self._tempdir.name)
+        ydl_opts.update({
             "http_headers": {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9",
             },
             "extractor_args": {"reddit": ["player-client=android,web"]},
-        }
+        })
         
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 if info:
                     self._format = "video"
-                    # Get all possible title fields and choose the longest one
-                    title_field = info.get('title', '') or ''
-                    desc_field = info.get('description', '') or ''
-                    fulltitle_field = info.get('fulltitle', '') or ''
-                    title = max([title_field, desc_field, fulltitle_field], key=len)
+                    title = extract_title_from_info(info)
                     if title:
-                        self._video_title = title[:500]
+                        self._video_title = title
                         logging.info("Reddit: Extracted title (%d chars): %s", len(title), title[:100] if len(title) > 100 else title)
                     
             # Find downloaded files

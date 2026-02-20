@@ -17,7 +17,8 @@ from database.model import (
     block_user,
     unblock_user,
 )
-from utils import sizeof_fmt, timeof_fmt
+from utils import format_system_stats, get_system_stats, timeof_fmt
+from engine.helper import sizeof_fmt
 
 
 # State management for admin actions
@@ -116,93 +117,9 @@ def handle_ping(client: Client, callback_query: types.CallbackQuery):
 
 def handle_server_stats(client: Client, callback_query: types.CallbackQuery):
     """Handle server stats - same as /stats but inline"""
-    import psutil
-    
-    callback_query.answer("טוען...")
-    
-    def safe(func, *args):
-        try:
-            return func(*args)
-        except Exception:
-            return None
-    
     try:
-        cpu_usage = safe(psutil.cpu_percent)
-        disk_usage = safe(psutil.disk_usage, "/")
-        swap = safe(psutil.swap_memory)
-        memory = safe(psutil.virtual_memory)
-        net_io = safe(psutil.net_io_counters)
-        boot_time = safe(psutil.boot_time)
-        
-        # CPU
-        cpu_str = f"{cpu_usage}%" if cpu_usage is not None else "N/A"
-        
-        # Disk
-        if disk_usage:
-            total, used, free, disk_percent = disk_usage
-            total_str = sizeof_fmt(total)
-            used_str = sizeof_fmt(used)
-            free_str = sizeof_fmt(free)
-            disk_percent_str = f"{disk_percent}%"
-        else:
-            total_str = used_str = free_str = disk_percent_str = "N/A"
-        
-        # Memory
-        if memory:
-            mem_total = sizeof_fmt(memory.total)
-            mem_free = sizeof_fmt(memory.available)
-            mem_used = sizeof_fmt(memory.used)
-            mem_percent = f"{memory.percent}%"
-        else:
-            mem_total = mem_free = mem_used = mem_percent = "N/A"
-        
-        # Swap
-        if swap:
-            swap_total = sizeof_fmt(swap.total)
-            swap_percent = f"{swap.percent}%"
-        else:
-            swap_total = swap_percent = "N/A"
-        
-        # Net IO
-        if net_io:
-            sent = sizeof_fmt(net_io.bytes_sent)
-            recv = sizeof_fmt(net_io.bytes_recv)
-        else:
-            sent = recv = "N/A"
-        
-        # Uptime
-        import time as time_module
-        os_uptime = timeof_fmt(time_module.time() - boot_time) if boot_time else "N/A"
-        
-        # Cores
-        try:
-            p_cores = psutil.cpu_count(logical=False) or "N/A"
-            t_cores = psutil.cpu_count(logical=True) or "N/A"
-        except Exception:
-            p_cores = t_cores = "N/A"
-        
-        text = f"""📈 **סטטיסטיקות שרת**
-
-╭🖥️ **מעבד:** {cpu_str}
-├💾 **זיכרון:** {mem_percent}
-╰🗃️ **דיסק:** {disk_percent_str}
-
-╭📤 **העלאה:** {sent}
-╰📥 **הורדה:** {recv}
-
-**סה״כ זיכרון:** {mem_total}
-**זיכרון פנוי:** {mem_free}
-**זיכרון בשימוש:** {mem_used}
-**SWAP:** {swap_total} | **שימוש:** {swap_percent}
-
-**סה״כ דיסק:** {total_str}
-**בשימוש:** {used_str} | **פנוי:** {free_str}
-
-**ליבות פיזיות:** {p_cores}
-**סה״כ ליבות:** {t_cores}
-
-⏲️ **זמן פעילות מערכת:** {os_uptime}
-"""
+        owner_stats, _ = format_system_stats()
+        text = owner_stats.replace("⌬─────「 סטטיסטיקות 」─────⌬\n\n", "📈 **סטטיסטיקות שרת**\n\n")
     except Exception as e:
         text = f"❌ שגיאה בקבלת סטטיסטיקות: {e}"
     
@@ -494,7 +411,7 @@ def handle_update_ytdlp_confirm(client: Client, callback_query: types.CallbackQu
     """Actually update yt-dlp and restart the bot."""
     callback_query.answer("מעדכן...")
     
-    from engine.generic import get_ytdlp_version, save_update_info
+    from engine.generic import get_ytdlp_version, save_update_info, run_ytdlp_pip_upgrade
     old_version = get_ytdlp_version()
     
     # Show progress
@@ -505,17 +422,9 @@ def handle_update_ytdlp_confirm(client: Client, callback_query: types.CallbackQu
     )
     
     try:
-        # Run pip upgrade
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
+        is_success, output = run_ytdlp_pip_upgrade()
         
-        output = result.stdout + result.stderr
-        
-        if "Successfully installed" in output and "yt-dlp" in output:
+        if is_success:
             # Extract new version
             import re
             version_match = re.search(r"yt-dlp-(\S+)", output)

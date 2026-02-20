@@ -96,3 +96,36 @@ def safe_truncate(text: str, limit: int = 4000) -> str:
         return text
     return text[:limit] + "..."
 
+
+def handle_download_error(bot_message, error: Exception):
+    """Safely format and send a generic download error message."""
+    truncated_error = safe_truncate(str(error), limit=3500)
+    bot_message.edit_text(
+        f"ההורדה נכשלה!❌\nאירעה שגיאה: `{truncated_error}`\n"
+        "אנא בדוק את הקישור ונסה שוב."
+    )
+
+
+def extract_title_from_info(info: dict) -> str:
+    """Safely extract the best title from a yt-dlp info dictionary."""
+    if not info:
+        return ""
+    title_field = info.get('title', '') or ''
+    desc_field = info.get('description', '') or ''
+    fulltitle_field = info.get('fulltitle', '') or ''
+    title = max([title_field, desc_field, fulltitle_field], key=len)
+    return title[:500] if title else ""
+
+
+def get_user_display_name(user_id: int) -> str:
+    """Safely get formatted user display name from stats."""
+    from database.model import get_user_stats
+    user_info = get_user_stats(user_id)
+    if user_info:
+        name = user_info.get('first_name') or ""
+        if user_info.get('username'):
+            name = f"{name} @{user_info['username']}".strip()
+        return name if name else str(user_id)
+    return str(user_id)
+
+

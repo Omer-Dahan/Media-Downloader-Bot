@@ -12,7 +12,7 @@ import requests
 from requests.exceptions import HTTPError
 from urllib.parse import urlparse
 
-from config import ENABLE_ARIA2, TMPFILE_PATH
+from config import ENABLE_ARIA2
 from engine.base import BaseDownloader
 from engine.network_errors import NetworkError, is_network_error
 

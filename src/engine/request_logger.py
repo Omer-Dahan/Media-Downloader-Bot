@@ -70,15 +70,7 @@ def get_request_log() -> str:
     return _redact_sensitive(content)
 
 
-def get_request_log_escaped() -> str:
-    """
-    Get captured logs with HTML escaping applied.
-    Safe for use in HTML messages.
-    
-    Returns:
-        HTML-escaped log content
-    """
-    return html.escape(get_request_log())
+
 
 
 def _redact_sensitive(text: str) -> str:

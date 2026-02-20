@@ -2,13 +2,122 @@ import re
 from urllib.parse import urlparse
 
 
-def sizeof_fmt(num: int, suffix="B"):
-    for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
-        if abs(num) < 1024.0:
-            return "%3.1f%s%s" % (num, unit, suffix)
-        num /= 1024.0
-    return "%.1f%s%s" % (num, "Yi", suffix)
+from engine.helper import sizeof_fmt
 
+import time
+import psutil
+
+def get_system_stats() -> dict:
+    """Get system resource usage statistics."""
+    def safe(func, *args):
+        try:
+            return func(*args)
+        except Exception:
+            return None
+
+    cpu_usage = safe(psutil.cpu_percent)
+    disk_usage = safe(psutil.disk_usage, "/")
+    swap = safe(psutil.swap_memory)
+    memory = safe(psutil.virtual_memory)
+    net_io = safe(psutil.net_io_counters)
+    boot_time = safe(psutil.boot_time)
+
+    # Cores
+    try:
+        p_cores = psutil.cpu_count(logical=False) or "N/A"
+        t_cores = psutil.cpu_count(logical=True) or "N/A"
+    except Exception:
+        p_cores = t_cores = "N/A"
+
+    return {
+        "cpu_usage": f"{cpu_usage}%" if cpu_usage is not None else "N/A",
+        "disk": disk_usage,
+        "swap": swap,
+        "memory": memory,
+        "net_io": net_io,
+        "boot_time": boot_time,
+        "p_cores": p_cores,
+        "t_cores": t_cores,
+    }
+
+
+def format_system_stats(bot_start_time=None) -> tuple[str, str]:
+    """
+    Format system stats into strings.
+    Returns: (owner_stats_str, user_stats_str)
+    """
+    stats = get_system_stats()
+    
+    # Disk
+    if stats["disk"]:
+        total, used, free, disk_percent = stats["disk"]
+        total_str = sizeof_fmt(total)
+        used_str = sizeof_fmt(used)
+        free_str = sizeof_fmt(free)
+        disk_percent_str = f"{disk_percent}%"
+    else:
+        total_str = used_str = free_str = disk_percent_str = "N/A"
+
+    # Memory
+    if stats["memory"]:
+        mem_total = sizeof_fmt(stats["memory"].total)
+        mem_free = sizeof_fmt(stats["memory"].available)
+        mem_used = sizeof_fmt(stats["memory"].used)
+        mem_percent = f"{stats['memory'].percent}%"
+    else:
+        mem_total = mem_free = mem_used = mem_percent = "N/A"
+
+    # Swap
+    if stats["swap"]:
+        swap_total = sizeof_fmt(stats["swap"].total)
+        swap_percent = f"{stats['swap'].percent}%"
+    else:
+        swap_total = swap_percent = "N/A"
+
+    # Net IO
+    if stats["net_io"]:
+        sent = sizeof_fmt(stats["net_io"].bytes_sent)
+        recv = sizeof_fmt(stats["net_io"].bytes_recv)
+    else:
+        sent = recv = "N/A"
+
+    # Uptime
+    bot_uptime = timeof_fmt(time.time() - bot_start_time) if bot_start_time else "N/A"
+    os_uptime = timeof_fmt(time.time() - stats["boot_time"]) if stats["boot_time"] else "N/A"
+
+    # Base top info
+    base_info = (
+        f"<b>╭🖥️ **שימוש במעבד »**</b>  __{stats['cpu_usage']}__\n"
+        f"<b>├💾 **שימוש בזיכרון »**</b>  __{mem_percent}__\n"
+        f"<b>╰🗃️ **שימוש בדיסק »**</b>  __{disk_percent_str}__\n\n"
+        f"<b>╭📤העלאה:</b> {sent}\n"
+        f"<b>╰📥הורדה:</b> {recv}\n\n\n"
+        f"<b>סה״כ זיכרון:</b> {mem_total}\n"
+        f"<b>זיכרון פנוי:</b> {mem_free}\n"
+        f"<b>זיכרון בשימוש:</b> {mem_used}\n"
+    )
+
+    owner_stats = (
+        "\n\n⌬─────「 סטטיסטיקות 」─────⌬\n\n" +
+        base_info +
+        f"<b>סה״כ SWAP:</b> {swap_total} | <b>שימוש ב-SWAP:</b> {swap_percent}\n\n"
+        f"<b>סה״כ שטח דיסק:</b> {total_str}\n"
+        f"<b>בשימוש:</b> {used_str} | <b>פנוי:</b> {free_str}\n\n"
+        f"<b>ליבות פיזיות:</b> {stats['p_cores']}\n"
+        f"<b>סה״כ ליבות:</b> {stats['t_cores']}\n\n"
+        f"<b>🤖זמן פעילות הבוט:</b> {bot_uptime}\n"
+        f"<b>⏲️זמן פעילות המערכת:</b> {os_uptime}\n"
+    )
+
+    user_stats = (
+        "\n\n⌬─────「 סטטיסטיקות 」─────⌬\n\n" +
+        base_info +
+        f"<b>סה״כ שטח דיסק:</b> {total_str}\n"
+        f"<b>בשימוש:</b> {used_str} | <b>פנוי:</b> {free_str}\n\n"
+        f"<b>🤖זמן פעילות הבוט:</b> {bot_uptime}\n"
+    )
+
+    return owner_stats, user_stats
 
 def timeof_fmt(seconds: int | float):
     periods = [("d", 86400), ("h", 3600), ("m", 60), ("s", 1)]
@@ -32,21 +141,7 @@ def is_youtube(url: str) -> bool:
         return False
 
 
-def extract_filename(response):
-    try:
-        content_disposition = response.headers.get("content-disposition")
-        if content_disposition:
-            filename = re.findall("filename=(.+)", content_disposition)[0]
-            return filename
-    except (TypeError, IndexError):
-        pass  # Handle potential exceptions during extraction
 
-    # Fallback if Content-Disposition header is missing
-    filename = response.url.rsplit("/")[-1]
-    if not filename:
-        from urllib.parse import quote_plus
-        filename = quote_plus(response.url)
-    return filename
 
 
 def extract_url_and_name(message_text):

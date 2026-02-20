@@ -21,28 +21,11 @@ from engine.torrent_manager import (
     TorrentConcurrencyError,
 )
 from engine.archive_manager import needs_archive, create_zip, create_split_archive, split_file
+from engine.helper import moon_progress_bar, sizeof_fmt
+from utils import timeof_fmt
 
 
-def sizeof_fmt(num: int) -> str:
-    """Format bytes to human readable string."""
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(num) < 1024.0:
-            return f"{num:.1f} {unit}"
-        num /= 1024.0
-    return f"{num:.1f} PB"
 
-
-def eta_fmt(seconds: int) -> str:
-    """Format seconds to human readable ETA."""
-    if seconds < 0:
-        return "∞"
-    if seconds < 60:
-        return f"{seconds}s"
-    if seconds < 3600:
-        return f"{seconds // 60}m {seconds % 60}s"
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
-    return f"{hours}h {minutes}m"
 
 
 class TorrentDownload(BaseDownloader):
@@ -95,7 +78,6 @@ class TorrentDownload(BaseDownloader):
         peers = status.get("num_leechs", 0)
         
         # Build moon phase progress bar using shared function
-        from engine.helper import moon_progress_bar
         bar = moon_progress_bar(progress)
         
         # State emoji
@@ -128,7 +110,7 @@ class TorrentDownload(BaseDownloader):
             f"{state_emoji} **מצב:** {state_text}",
             f"⬇️ **מהירות:** {sizeof_fmt(speed)}/s",
             f"📦 **הורד:** {sizeof_fmt(downloaded)} / {sizeof_fmt(total)}",
-            f"⏱️ **זמן משוער:** {eta_fmt(eta)}",
+            f"⏱️ **זמן משוער:** {timeof_fmt(eta)}",
             f"👥 **עמיתים:** {seeds} seeds, {peers} peers",
         ]
         

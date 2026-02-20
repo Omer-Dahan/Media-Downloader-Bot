@@ -30,3 +30,6 @@ env/
 # Temp
 downloads/
 temp/
+
+# Status files
+*.pid
