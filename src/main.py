@@ -42,7 +42,7 @@ from database.model import (
     CreditsExhaustedException,
     get_total_credits,
 )
-from engine import direct_entrance, youtube_entrance, youtube_entrance_with_quality, get_youtube_video_info, special_download_entrance, torrent_entrance, is_magnet_link, jdownloader_entrance
+from engine import direct_entrance, youtube_entrance, youtube_entrance_with_quality, get_youtube_video_info, special_download_entrance, torrent_entrance, is_magnet_link, jdownloader_entrance, TORRENT_AVAILABLE, JDOWNLOADER_AVAILABLE
 from engine.base import cancellation_events, _resume_state_cache
 from engine.concurrency import concurrency_manager
 from engine.generic import check_and_send_update_notification, auto_update_ytdlp
@@ -414,10 +414,17 @@ def direct_download(client: Client, message: types.Message):
     try:
         direct_entrance(client, bot_msg, url)
     except ValueError as e:
-        report_error_to_archive(client, message.from_user, url, e)
-        message.reply_text(e.__str__(), quote=True)
-        bot_msg.delete()
-        return
+        # If direct download fails, try JDownloader2 as fallback
+        if "בוטלה" not in str(e):
+            logging.info("Direct download failed for %s, falling back to JDownloader2: %s", url, e)
+            try:
+                jdownloader_entrance(client, bot_msg, url)
+            except Exception as jd_e:
+                report_error_to_archive(client, message.from_user, url, jd_e)
+                message.reply_text(str(jd_e), quote=True)
+                bot_msg.delete()
+        else:
+            raise
 
 
 @app.on_message(filters.command(["spdl"]))
@@ -471,6 +478,15 @@ def torrent_command_handler(client: Client, message: types.Message):
     user = message.from_user
     init_user(chat_id, first_name=user.first_name if user else None, username=user.username if user else None)
     
+    # Check if torrent feature is available at all
+    if not TORRENT_AVAILABLE:
+        message.reply_text(
+            "🧲 **הורדת טורנטים אינה זמינה בגרסה זו**\n\n"
+            "qBittorrent אינו מותקן או מוגדר בשרת.",
+            quote=True,
+        )
+        return
+
     # Check 500+ credits requirement
     total_credits = get_total_credits(chat_id)
     if total_credits < TORRENT_MIN_CREDITS:
@@ -711,6 +727,15 @@ def torrent_file_handler(client: Client, message: types.Message):
     file_name = document.file_name or ""
     if not file_name.lower().endswith(".torrent"):
         return  # Not a torrent file, ignore
+
+    # Check if torrent feature is available at all
+    if not TORRENT_AVAILABLE:
+        message.reply_text(
+            "🧲 **הורדת טורנטים אינה זמינה בגרסה זו**\n\n"
+            "qBittorrent אינו מותקן או מוגדר בשרת.",
+            quote=True,
+        )
+        return
     
     chat_id = message.from_user.id
     user = message.from_user

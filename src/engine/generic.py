@@ -26,18 +26,20 @@ UPDATE_FLAG_FILE = _SCRIPT_DIR / ".ytdlp_updated"
 def _ensure_node_in_path():
     """Ensure Node.js is in PATH for yt-dlp."""
     import shutil
-    
+
     # Check if node is already available
     if shutil.which("node"):
         return
 
-    # Check common Windows install location
-    node_path = Path(r"C:\Program Files\nodejs")
-    if node_path.exists() and (node_path / "node.exe").exists():
-        logging.info("Found Node.js at %s, adding to PATH for yt-dlp", node_path)
-        os.environ["PATH"] += os.pathsep + str(node_path)
-    else:
-        logging.warning("Node.js not found in PATH or standard location. YouTube downloads might be slower or fail.")
+    # Check common Windows install location (Windows only)
+    if sys.platform == "win32":
+        node_path = Path(r"C:\Program Files\nodejs")
+        if node_path.exists() and (node_path / "node.exe").exists():
+            logging.info("Found Node.js at %s, adding to PATH for yt-dlp", node_path)
+            os.environ["PATH"] += os.pathsep + str(node_path)
+            return
+
+    logging.warning("Node.js not found in PATH. YouTube downloads might be slower or fail.")
 
 # Run this check immediately when module loads
 _ensure_node_in_path()

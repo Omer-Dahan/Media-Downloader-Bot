@@ -8,8 +8,22 @@ from engine.instagram import InstagramDownload
 from engine.krakenfiles import krakenfiles_download
 from engine.reddit import RedditDownload
 from engine.tiktok import TikTokDownload
-from engine.torrent import TorrentDownload
-from engine.jdownloader import JDownloaderDownload
+
+# Optional: Torrent support (requires qbittorrentapi)
+try:
+    from engine.torrent import TorrentDownload
+    TORRENT_AVAILABLE = True
+except (ImportError, Exception):
+    TorrentDownload = None  # type: ignore
+    TORRENT_AVAILABLE = False
+
+# Optional: JDownloader support (requires myjdapi)
+try:
+    from engine.jdownloader import JDownloaderDownload
+    JDOWNLOADER_AVAILABLE = True
+except (ImportError, Exception):
+    JDownloaderDownload = None  # type: ignore
+    JDOWNLOADER_AVAILABLE = False
 
 
 def googledrive_disabled(client: Any, bot_message: Any, url: str) -> None:
@@ -72,14 +86,13 @@ def tiktok_handler(client: Any, bot_message: Any, url: str) -> None:
 
 # --- Handler for Torrents ---
 def torrent_entrance(client: Any, bot_message: Any, source: str, torrent_file_path: str = None) -> None:
-    """Start torrent download from magnet link or .torrent file.
-    
-    Args:
-        client: Pyrogram client
-        bot_message: Bot message for updates
-        source: Magnet link (str) or identifier
-        torrent_file_path: Path to .torrent file if uploaded
-    """
+    """Start torrent download from magnet link or .torrent file."""
+    if not TORRENT_AVAILABLE:
+        bot_message.edit_text(
+            "❌ **הורדת טורנטים אינה זמינה**\n\n"
+            "ספריית qbittorrentapi אינה מותקנת או ש-qBittorrent אינו מוגדר."
+        )
+        return
     from pathlib import Path
     file_path = Path(torrent_file_path) if torrent_file_path else None
     downloader = TorrentDownload(client, bot_message, source, file_path)
@@ -97,6 +110,12 @@ def is_magnet_link(text: str) -> bool:
 # --- Handler for JDownloader2 (last-resort fallback) ---
 def jdownloader_entrance(client: Any, bot_message: Any, url: str) -> None:
     """Start download via JDownloader2 as last-resort fallback."""
+    if not JDOWNLOADER_AVAILABLE:
+        bot_message.edit_text(
+            "❌ **JDownloader2 אינו זמין**\n\n"
+            "ספריית myjdapi אינה מותקנת או ש-JDownloader2 אינו מוגדר."
+        )
+        return
     dl = JDownloaderDownload(client, bot_message, url)
     dl.start()
 
@@ -107,8 +126,9 @@ DOWNLOADER_MAP: dict[str, Callable[[Any, Any, str], Any]] = {
     "instagram.com": instagram_handler,
     "reddit.com": reddit_handler,
     "redd.it": reddit_handler,
-    "tiktok.com": tiktok_handler,
-    "vt.tiktok.com": tiktok_handler,
+    "tiktok.com": jdownloader_entrance,
+    "vt.tiktok.com": jdownloader_entrance,
+    "xhamster.com": jdownloader_entrance,
     # Google services (TEMPORARILY DISABLED)
     "drive.google.com": googledrive_disabled,
     "docs.google.com": googledrive_disabled,
@@ -148,8 +168,8 @@ def special_download_entrance(client: Any, bot_message: Any, url: str) -> Any:
         if hostname.endswith(domain_suffix):
             return handler_function(client, bot_message, url)
 
-    # Check if URL contains media extension - use direct download
+    # Check if URL contains media extension - use JDownloader (handles auth, redirects better)
     if is_direct_download_url(url):
-        return direct_entrance(client, bot_message, url)
+        return jdownloader_entrance(client, bot_message, url)
 
     raise ValueError(f"לא נמצא מוריד מתאים עבור: {hostname}")

@@ -6,6 +6,7 @@ stall detection, timeouts, and proper cleanup.
 Uses my.jdownloader.org API for remote control.
 """
 import logging
+import shutil
 import time
 from pathlib import Path
 
@@ -89,41 +90,46 @@ class JDownloaderDownload(BaseDownloader):
         downloaded = status.get("downloaded", 0)
         total = status.get("total", 0)
 
-        # State emoji
-        state_emojis = {
-            "downloading": "📥",
-            "waiting": "⏳",
-            "finished": "✅",
-            "error": "❌",
-            "missing": "❓",
+        # State text translation
+        state_hebrew = {
+            "downloading": "מוריד",
+            "waiting": "ממתין",
+            "finished": "הסתיים",
+            "error": "שגיאה",
+            "missing": "חסר",
         }
-        state_emoji = state_emojis.get(state, "🔄")
+        state_text = state_hebrew.get(state, state)
 
         # Progress bar (moon phases)
-        filled = int(progress / 10)
-        bar = "🌕" * filled + "🌑" * (10 - filled)
+        from engine.helper import moon_progress_bar
+        bar = moon_progress_bar(progress)
 
-        # Build message
-        lines = [
-            f"🔧 **JDownloader2**",
-            f"📦 {name[:40]}{'...' if len(name) > 40 else ''}",
-            "",
-            f"{bar} {progress:.1f}%",
-        ]
+        # Format sizes
+        size_progress = f"{sizeof_fmt(downloaded)}/{sizeof_fmt(total)}" if total > 0 else f"{sizeof_fmt(downloaded)}"
 
-        if total > 0:
-            lines.append(f"📊 {sizeof_fmt(downloaded)}/{sizeof_fmt(total)}")
-
+        speed_str = f"{sizeof_fmt(speed)}/s" if speed > 0 else ""
         if speed > 0:
-            lines.append(f"⚡ {sizeof_fmt(speed)}/s")
             self._last_speed = speed
+        
+        eta_str = eta_fmt(eta) if eta > 0 else ""
 
-        if eta > 0:
-            lines.append(f"⏱️ ETA: {eta_fmt(eta)}")
+        def more(title, value):
+            return f"{title} {value}" if value else ""
 
-        lines.append(f"\n{state_emoji} סטטוס: {state}")
+        # Build message - matching RTL format from base.py
+        text = f"""‏🔧 **JDownloader2**
+‏📦 {name[:40]}{'...' if len(name) > 40 else ''}
 
-        return "\n".join(lines)
+‏━━━━━━━━━━━━━━━━━━
+‏{bar} {progress:.1f}%
+‏📊 {size_progress}
+{more("‏⚡ מהירות:", speed_str)}
+{more("‏⏱️ זמן משוער:", eta_str)}
+‏━━━━━━━━━━━━━━━━━━
+‏📥 סטטוס: {state_text}"""
+
+        # Remove empty lines created by empty `more()` values
+        return "\n".join([line for line in text.splitlines() if line.strip() != ""])
 
     def _poll_progress(self) -> bool:
         """
@@ -243,6 +249,7 @@ class JDownloaderDownload(BaseDownloader):
         logging.info("JDownloader download started - package: %s, user: %s", self._package_id, user_id)
 
         # Wrap everything in try/finally to ensure cleanup
+        _download_succeeded = False
         try:
             # 4. Poll progress
             while True:
@@ -278,16 +285,58 @@ class JDownloaderDownload(BaseDownloader):
             if not files:
                 raise JDownloaderError("לא נמצאו קבצים להעלאה.")
 
-            # 7. Upload
-            logging.info("JDownloader download complete - %d files to upload", len(files))
-            self._upload(files=[str(f) for f in files])
+            # 7. Build metadata from the actual file (get_metadata() searches self._tempdir
+            #    which is empty for JDownloader — the file lives in JDOWNLOADER_DOWNLOAD_DIR)
+            primary_file = files[0]
+            meta = self._extract_video_metadata(primary_file)
+            # Build caption using the filename as title (no _video_title set for JD downloads)
+            import html as _html
+            title = primary_file.stem[:self._title_length]
+            duration_minutes = int(meta["duration"]) // 60
+            duration_seconds = int(meta["duration"]) % 60
+            duration_str = f"{duration_minutes}:{duration_seconds:02d} דקות"
+            meta["caption"] = (
+                f"🎬 <b>{_html.escape(title)}</b>\n\n"
+                f"<blockquote expandable>🔗 מקור: {_html.escape(self._url)}</blockquote>\n"
+                f"📐 רזולוציה: {meta['width']}x{meta['height']}\n"
+                f"⏱️ אורך: {duration_str}\n"
+                f"⬇️ הקובץ מוכן לצפייה והורדה\n"
+                f"צפייה מהנה 👀✨"
+            )
 
-            # 8. Cleanup from JDownloader
+            logging.info("JDownloader download complete - %d files to upload", len(files))
+            self._upload(files=[str(f) for f in files], meta=meta)
+
+            # 8. Cleanup from JDownloader and disk (success path - delete files)
+            _download_succeeded = True
             try:
-                self._manager.cleanup_finished(self._package_id)
+                self._manager.remove_download(self._package_id, user_id, delete_files=True)
+                logging.info("Removed JD package %s after successful upload", self._package_id)
             except Exception as e:
-                logging.warning("Failed to cleanup JD package: %s", e)
+                logging.warning("Failed to remove JD package via API after success: %s", e)
+
+            # Safety net: manually delete files from disk in case JD API didn't
+            if output_path and output_path.exists():
+                try:
+                    if output_path.is_dir():
+                        shutil.rmtree(output_path, ignore_errors=True)
+                    else:
+                        output_path.unlink(missing_ok=True)
+                        # Also try to remove the parent dir if it's empty
+                        parent = output_path.parent
+                        if parent.exists() and not any(parent.iterdir()):
+                            parent.rmdir()
+                    logging.info("Manually deleted downloaded files: %s", output_path)
+                except Exception as e:
+                    logging.warning("Failed to manually delete files %s: %s", output_path, e)
 
         finally:
+            # On failure/cancellation - remove the stalled/errored package from JDownloader queue
+            if not _download_succeeded and self._manager and self._package_id is not None:
+                try:
+                    self._manager.remove_download(self._package_id, user_id, delete_files=True)
+                    logging.info("Removed failed JD package %s from queue", self._package_id)
+                except Exception as e:
+                    logging.warning("Failed to remove failed JD package from queue: %s", e)
             # Always unregister to free concurrency slot
             JDownloaderManager._unregister_download(user_id)

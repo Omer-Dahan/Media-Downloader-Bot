@@ -835,10 +835,10 @@ class BaseDownloader(ABC):
                         # Use split upload flow
                         success = self._upload_split_video(parts, meta)
                         # Handle success message
-                        remaining_text = ""
-                        if hasattr(self, '_remaining_credits') and self._remaining_credits is not None:
-                            remaining_text = f" | קרדיטים נותרים: {self._remaining_credits}"
-                        self._bot_msg.edit_text(f"✅ הושלם בהצלחה - {len(parts)} חלקים{remaining_text}")
+                        try:
+                            self._bot_msg.delete()
+                        except Exception:
+                            pass
                         return success
 
         success = SimpleNamespace(document=None, video=None, audio=None, animation=None, photo=None)
@@ -1015,11 +1015,11 @@ class BaseDownloader(ABC):
             if file_sizes:
                 self._remaining_credits = self._record_usage(file_sizes)
         
-        # change progress bar to done with remaining credits
-        remaining_text = ""
-        if hasattr(self, '_remaining_credits') and self._remaining_credits is not None:
-            remaining_text = f" | קרדיטים נותרים: {self._remaining_credits}"
-        self._bot_msg.edit_text(f"✅ הושלם בהצלחה{remaining_text}")
+        # Delete the progress/status message — the uploaded file is the confirmation
+        try:
+            self._bot_msg.delete()
+        except Exception:
+            pass
         return success
 
     def _get_video_cache(self):

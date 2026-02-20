@@ -9,7 +9,12 @@ import threading
 from pathlib import Path
 from typing import Any
 
-import qbittorrentapi
+try:
+    import qbittorrentapi
+    QBITTORRENT_AVAILABLE = True
+except ImportError:
+    qbittorrentapi = None  # type: ignore
+    QBITTORRENT_AVAILABLE = False
 
 from config import (
     QBITTORRENT_HOST,
@@ -46,6 +51,10 @@ class TorrentManager:
     
     def __init__(self):
         """Initialize connection to qBittorrent."""
+        if not QBITTORRENT_AVAILABLE:
+            raise TorrentConnectionError(
+                "ספריית qbittorrentapi אינה מותקנת. התקן אותה עם: pip install qbittorrentapi"
+            )
         try:
             self._client = qbittorrentapi.Client(
                 host=QBITTORRENT_HOST,
@@ -56,10 +65,14 @@ class TorrentManager:
             # Test connection
             self._client.auth_log_in()
             logging.info("Connected to qBittorrent at %s:%s", QBITTORRENT_HOST, QBITTORRENT_PORT)
-        except qbittorrentapi.LoginFailed as e:
-            logging.error("qBittorrent login failed: %s", e)
-            raise TorrentConnectionError("שגיאת התחברות ל-qBittorrent. בדוק שם משתמש וסיסמה.") from e
+        except TorrentConnectionError:
+            raise
         except Exception as e:
+            # Use class-level attribute check to avoid NameError when lib missing
+            login_failed = getattr(qbittorrentapi, "LoginFailed", None)
+            if login_failed and isinstance(e, login_failed):
+                logging.error("qBittorrent login failed: %s", e)
+                raise TorrentConnectionError("שגיאת התחברות ל-qBittorrent. בדוק שם משתמש וסיסמה.") from e
             logging.error("Failed to connect to qBittorrent: %s", e)
             raise TorrentConnectionError(
                 "לא ניתן להתחבר ל-qBittorrent. ודא שהשרת פועל עם Web UI מופעל."
