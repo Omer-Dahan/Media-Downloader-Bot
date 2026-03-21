@@ -26,13 +26,14 @@ from database.model import (
     get_quality_settings,
     get_subtitles_settings,
     get_title_length_settings,
+    get_long_description_settings,
     get_user_stats,
     use_quota,
     use_quota_dynamic,
     get_total_credits,
     CreditsExhaustedException,
 )
-from engine.helper import debounce, sizeof_fmt, safe_truncate
+from engine.helper import debounce, sizeof_fmt, safe_truncate, create_telegraph_page
 from engine.network_errors import NetworkError, is_network_error, format_network_error_message
 
 cancellation_events = set()
@@ -77,7 +78,8 @@ class BaseDownloader(ABC):
         self._format = get_format_settings(self._chat_id)
         self._subtitles = get_subtitles_settings(self._chat_id)
         self._title_length = get_title_length_settings(self._chat_id)  # Max chars for title in caption
-        self._video_title = None  # Full title for caption
+        self._video_title = None  # Short title for caption
+        self._video_description = None  # Full description for separate message
 
     def __del__(self):
         self._tempdir.cleanup()
@@ -351,7 +353,9 @@ class BaseDownloader(ABC):
         audio_extensions = {'.mp3', '.m4a', '.aac', '.ogg', '.opus', '.wav', '.flac'}
         allowed_extensions = video_extensions | audio_extensions
         
-        all_files = list(Path(self._tempdir.name).glob("*"))
+        # Use rglob instead of glob to find files in subdirectories (important for gallery-dl)
+        # Also ensure we only take files, to avoid "Permission denied" errors on directories
+        all_files = [f for f in Path(self._tempdir.name).rglob("*") if f.is_file()]
         media_files = [f for f in all_files if f.suffix.lower() in allowed_extensions]
         
         if not media_files:
@@ -397,8 +401,14 @@ class BaseDownloader(ABC):
         
         # Extract title: prefer stored full title, otherwise use filename
         if self._video_title:
-            title = self._video_title[:self._title_length]  # Use user's preferred title length
-            logging.info("get_metadata: Using stored _video_title (%d chars, max=%d)", len(title), self._title_length)
+            # If length is 0 (Unlimited) or 4000, or explicitly 1000, 
+            # we must limit caption to ~750 to fit URL and formatting tags under 1024
+            if self._title_length == 0 or self._title_length >= 1000:
+                limit = 750
+            else:
+                limit = self._title_length
+            title = self._video_title[:limit]
+            logging.info("get_metadata: Using stored _video_title (%d chars, max=%d)", len(title), limit)
         else:
             title = Path(video_path).stem if video_path else "Unknown"
             logging.info("get_metadata: Using filename as title: %s", title[:50])
@@ -407,16 +417,26 @@ class BaseDownloader(ABC):
         credits_line = ""
         if hasattr(self, '_remaining_credits') and self._remaining_credits is not None:
             credits_line = f"\nקרדיטים נותרים: {self._remaining_credits} 💳"
-        
+
+        # If Telegraph is enabled, generate link here to include in caption
+        telegraph_line = ""
+        if self._title_length == 0:
+            page_title = self._video_title[:100] if self._video_title else "תיאור סרטון"
+            # Combine title and description for page
+            page_content = f"{self._video_title}\n\n{self._video_description}" if self._video_description else self._video_title
+            page_url = create_telegraph_page(page_title, self._url, page_content)
+            if page_url:
+                telegraph_line = f"\n🌐 <b>תיאור מלא ב-Telegraph:</b>\n\n{page_url}\n"
+
         # Different caption for audio vs video
         import html
-        esc_title = html.escape(title)
+        esc_title = html.escape(title) if title else "Unknown"
         esc_url = html.escape(self._url)
         
         if is_audio:
-            caption = f"🎵 <b>{esc_title}</b>\n\n<blockquote expandable>🔗 מקור: {esc_url}</blockquote>\n⏱️ אורך: {duration_str}\n⬇️ הקובץ מוכן להורדה{credits_line}\nשמיעה מהנה 🎧✨"
+            caption = f"🎵 <b>{esc_title}</b>\n\n🔗 מקור: {esc_url}\n⏱️ אורך: {duration_str}\n{telegraph_line}⬇️ הקובץ מוכן להורדה{credits_line}\nשמיעה מהנה 🎧✨"
         else:
-            caption = f"🎬 <b>{esc_title}</b>\n\n<blockquote expandable>🔗 מקור: {esc_url}</blockquote>\n📐 רזולוציה: {width}x{height}\n⏱️ אורך: {duration_str}\n⬇️ הקובץ מוכן לצפייה והורדה{credits_line}\nצפייה מהנה 👀✨"
+            caption = f"🎬 <b>{esc_title}</b>\n\n🔗 מקור: {esc_url}\n📐 רזולוציה: {width}x{height}\n⏱️ אורך: {duration_str}\n{telegraph_line}\n⬇️ הקובץ מוכן לצפייה והורדה{credits_line}\nצפייה מהנה 👀✨"
         
         return dict(height=height, width=width, duration=duration, thumb=thumb, caption=caption)
 
@@ -761,8 +781,9 @@ class BaseDownloader(ABC):
             del self._upload_speed
             
         if files is None:
-            # Exclude .part files (incomplete downloads)
-            files = [f for f in Path(self._tempdir.name).glob("*") if not f.suffix.lower() == '.part']
+            # Use rglob instead of glob to find files in subdirectories (useful for gallery-dl)
+            # Exclude .part files (incomplete downloads) and Ensure we only take files, not folders
+            files = [f for f in Path(self._tempdir.name).rglob("*") if f.is_file() and not f.suffix.lower() == '.part']
         if meta is None:
             meta = self.get_metadata()
 
@@ -973,6 +994,34 @@ class BaseDownloader(ABC):
         # Forward to archive channel using helper
         self._forward_to_archive(success, files, skip_archive)
         
+        # Send full description message if enabled (non-telegraph cases)
+        if success:
+             import html
+             text = None
+             
+             # Case: Long description (title_length == 4000)
+             if self._title_length == 4000:
+                  # Only send if it's actually long or if there's a separate description
+                  full_text = f"<b>{self._video_title}</b>\n\n{self._video_description}" if self._video_description else self._video_title
+                  if full_text:
+                       full_desc = html.escape(full_text[:4000])
+                       text = f"📋 <b>תיאור מלא:</b>\n\n<blockquote expandable>{full_desc}</blockquote>"
+
+             if text:
+                 try:
+                     # Calculate reply message ID
+                     reply_to = success[0].id if isinstance(success, list) else success.id
+                     
+                     self._client.send_message(
+                         chat_id=self._chat_id,
+                         text=text,
+                         parse_mode=enums.ParseMode.HTML,
+                         reply_to_message_id=reply_to
+                     )
+                     logging.info("Sent long description for %s", self._url)
+                 except Exception as e:
+                     logging.error("Failed to send long description: %s", e)
+
         # Send subtitle files if user has subtitles enabled and files were found
         if subtitle_files and self._subtitles:
             for sub_file in subtitle_files:
@@ -1021,27 +1070,40 @@ class BaseDownloader(ABC):
 
     @final
     def start(self):
-        check_quota(self._from_user)
-        self._remaining_credits = None  # Initialize
-        if cache := self._get_video_cache():
-            logging.info("Cache hit for %s", self._url)
-            meta, file_id = json.loads(cache["meta"]), json.loads(cache["file_id"])
-            meta["cache"] = True
-            # For cached files, still deduct credits (minimal cost)
-            self._remaining_credits = self._record_usage(0)
-            try:
-                self._upload(file_id, meta)
-            except ValueError as e:
-                # Cache might be corrupted (wrong file type) - delete and retry fresh download
-                if "CACHE_CORRUPTED" in str(e):
-                    logging.warning("Corrupted cache detected, deleting and retrying: %s", e)
-                    self._redis.delete_cache(self._calc_video_key())
-                    self._start()
-                else:
-                    raise
-        else:
-            self._start()
-            # Credits are charged in _upload() - no need to charge again here
+        try:
+            check_quota(self._from_user)
+            self._remaining_credits = None  # Initialize
+            if cache := self._get_video_cache():
+                logging.info("Cache hit for %s", self._url)
+                meta, file_id = json.loads(cache["meta"]), json.loads(cache["file_id"])
+                meta["cache"] = True
+                # For cached files, still deduct credits (minimal cost)
+                self._remaining_credits = self._record_usage(0)
+                try:
+                    self._upload(file_id, meta)
+                except ValueError as e:
+                    # Cache might be corrupted (wrong file type) - delete and retry fresh download
+                    if "CACHE_CORRUPTED" in str(e):
+                        logging.warning("Corrupted cache detected, deleting and retrying: %s", e)
+                        self._redis.delete_cache(self._calc_video_key())
+                        self._start()
+                    else:
+                        raise
+            else:
+                self._start()
+                # Credits are charged in _upload() - no need to charge again here
+        except ValueError as e:
+            # Check if this is a manual cancellation
+            if "בוטלה" in str(e):
+                logging.info("Operation cancelled by user: %s", self._url)
+                try:
+                    # Only edit if it wasn't already updated by someone else
+                    self._bot_msg.edit_text("🛑 ההורדה בוטלה בהצלחה")
+                except Exception:
+                    # Message might have been deleted or edited already
+                    pass
+                return  # Satisfy the caller by not raising an exception
+            raise
         
         # Send temporary notification with remaining credits (auto-delete after 5 seconds)
         if self._remaining_credits is not None:

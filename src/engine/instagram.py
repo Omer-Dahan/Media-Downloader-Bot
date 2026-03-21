@@ -83,10 +83,10 @@ class InstagramDownload(BaseDownloader):
                         self._video_title = title[:500]
                         logging.info("Instagram: Extracted title (%d chars): %s", len(title), title[:100] if len(title) > 100 else title)
 
-            files = list(pathlib.Path(self._tempdir.name).glob("*"))
+            files = [f for f in pathlib.Path(self._tempdir.name).rglob("*") if f.is_file()]
             if files:
                 logging.info("Instagram: yt-dlp succeeded!")
-                return [str(f) for f in files if f.is_file()]
+                return [str(f) for f in files]
         except Exception as e:
             logging.warning("Instagram: yt-dlp failed: %s", e)
 
@@ -137,7 +137,7 @@ class InstagramDownload(BaseDownloader):
             post = instaloader.Post.from_shortcode(L.context, shortcode)
             L.download_post(post, target="")
 
-            files = list(pathlib.Path(self._tempdir.name).glob("*"))
+            files = [f for f in pathlib.Path(self._tempdir.name).rglob("*") if f.is_file()]
             if files:
                 logging.info("Instagram: instaloader succeeded!")
                 # Filter out non-media files
@@ -249,7 +249,7 @@ class InstagramDownload(BaseDownloader):
 
         from pathlib import Path
 
-        files = [Path(f) for f in downloaded_files] if downloaded_files else list(Path(self._tempdir.name).glob("*"))
+        files = [Path(f) for f in downloaded_files] if downloaded_files else [f for f in Path(self._tempdir.name).rglob("*") if f.is_file()]
         meta = self.get_metadata()
 
         success = self._upload(files=downloaded_files, meta=meta, skip_archive=True)

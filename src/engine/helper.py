@@ -106,15 +106,25 @@ def handle_download_error(bot_message, error: Exception):
     )
 
 
-def extract_title_from_info(info: dict) -> str:
-    """Safely extract the best title from a yt-dlp info dictionary."""
+def extract_metadata_from_info(info: dict) -> dict:
+    """Safely extract title and description from a yt-dlp info dictionary."""
     if not info:
-        return ""
-    title_field = info.get('title', '') or ''
-    desc_field = info.get('description', '') or ''
-    fulltitle_field = info.get('fulltitle', '') or ''
-    title = max([title_field, desc_field, fulltitle_field], key=len)
-    return title[:500] if title else ""
+        return {"title": "", "description": ""}
+    
+    # Standard title fields
+    title = info.get('title') or info.get('fulltitle') or ""
+    
+    # Standard description field
+    description = info.get('description', '') or ""
+    
+    # Fallback: if title is empty but description exists, use short part of description as title
+    if not title and description:
+        title = description.split("\n")[0][:100]
+        
+    return {
+        "title": title[:1000].strip(),
+        "description": description[:50000].strip()
+    }
 
 
 def get_user_display_name(user_id: int) -> str:
@@ -127,5 +137,83 @@ def get_user_display_name(user_id: int) -> str:
             name = f"{name} @{user_info['username']}".strip()
         return name if name else str(user_id)
     return str(user_id)
+
+
+def create_telegraph_page(title, url, description):
+    """
+    Create a Telegra.ph page for long descriptions.
+    
+    Returns:
+        The URL of the created page, or None on failure.
+    """
+    import requests
+    import json
+    import logging
+    
+    # 1. Prepare nodes for Telegraph (must be JSON nodes)
+    nodes = []
+    
+    # Attempt to embed if it's YouTube
+    if "youtube.com" in url or "youtu.be" in url:
+        video_id = ""
+        if "youtu.be" in url:
+            video_id = url.split("/")[-1].split("?")[0]
+        elif "v=" in url:
+            video_id = url.split("v=")[1].split("&")[0]
+        
+        if video_id:
+            nodes.append({
+                "tag": "figure",
+                "children": [
+                    {"tag": "iframe", "attrs": {"src": f"https://www.youtube.com/embed/{video_id}"}}
+                ]
+            })
+
+    # Add source link
+    nodes.append({
+        "tag": "p", 
+        "children": [
+            "🔗 ",
+            {"tag": "a", "attrs": {"href": url}, "children": ["קישור מקור"]}
+        ]
+    })
+    nodes.append({"tag": "hr"})
+    
+    # Add description (split into paragraphs)
+    if description:
+        for line in description.split("\n"):
+            if line.strip():
+                nodes.append({"tag": "p", "children": [line.strip()]})
+    
+    try:
+        # 1. Create a temporary account (or reuse)
+        account_resp = requests.post("https://api.telegra.ph/createAccount", json={
+            "short_name": "YD_IL",
+            "author_name": "Download Bot"
+        }, timeout=10)
+        
+        if not account_resp.ok:
+            logging.error("Telegraph createAccount failed: %s", account_resp.text)
+            return None
+            
+        token = account_resp.json()["result"]["access_token"]
+        
+        # 2. Create the page
+        create_resp = requests.post("https://api.telegra.ph/createPage", json={
+            "access_token": token,
+            "title": title or "תיאור סרטון",
+            "content": nodes,
+            "return_content": False
+        }, timeout=15)
+        
+        if create_resp.ok and create_resp.json().get("ok"):
+            return create_resp.json()["result"]["url"]
+        else:
+            logging.error("Telegraph createPage failed: %s", create_resp.text)
+            
+    except Exception as e:
+        logging.error("Telegraph integration error: %s", e)
+    
+    return None
 
 

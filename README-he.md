@@ -210,6 +210,45 @@ JDOWNLOADER_DEVICE_NAME=your_device_name
 python src/main.py
 ```
 
+### 🐧 התקנה כשירות רקע על שרת לינוקס (אופציונלי)
+
+בכדי להריץ את הבוט ברקע בשרת לינוקס ולוודא שהוא פועל אוטומטית גם לאחר הפעלה מחדש של השרת, מומלץ להריץ אותו כשירות `systemd`.
+
+1. **יצירת קובץ השירות של systemd**:
+   ```bash
+   sudo nano /etc/systemd/system/media-downloader.service
+   ```
+
+2. **הדבק את התצורה הבאה** (יש לשנות את הנתיבים ואת שם המשתמש בהתאם למוגדר בשרת שלך):
+   ```ini
+   [Unit]
+   Description=Media Downloader Telegram Bot
+   After=network.target
+
+   [Service]
+   Type=simple
+   User=your_linux_user
+   WorkingDirectory=/path/to/media-downloader-bot
+   ExecStart=/path/to/media-downloader-bot/venv/bin/python src/main.py
+   Restart=always
+   RestartSec=10
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+3. **הפעלה והגדרה מחדש של השרת להרצת השירות**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable media-downloader
+   sudo systemctl start media-downloader
+   ```
+
+4. **צפייה בלוגים בזמן אמת**:
+   ```bash
+   sudo journalctl -u media-downloader -f
+   ```
+
 ---
 
 ## 🤖 פקודות זמינות

@@ -8,6 +8,9 @@ Uses my.jdownloader.org API for remote control.
 import logging
 import shutil
 import time
+import subprocess
+import sys
+import threading
 from pathlib import Path
 
 from config import (
@@ -53,6 +56,42 @@ class JDownloaderDownload(BaseDownloader):
         self._start_time: float = 0
         self._last_speed: float = 0
         self._stall_start: float = 0
+
+    def _download_subtitles_background(self):
+        """Fetch subtitles using yt-dlp in the background while JD downloads video."""
+        if not self._subtitles:
+            return
+            
+        logging.info("Attempting to fetch subtitles for JD download via yt-dlp: %s", self._url)
+        try:
+            # We download subtitles to self._tempdir.name
+            # BaseDownloader._upload will pick them up from there if we include them.
+            
+            # Construct yt-dlp command to only get subtitles
+            cmd = [
+                sys.executable, "-m", "yt_dlp",
+                "--skip-download",
+                "--writesubtitles",
+                "--writeautomaticsub",
+                "--subtitleslangs", "en,en-orig,en-US,en-GB,he",  # Added Hebrew as per bot context
+                "--subtitlesformat", "srt",
+                "--output", f"{self._tempdir.name}/%(title).70s.%(ext)s",
+                "--quiet",
+                "--no-warnings",
+                self._url
+            ]
+            
+            def run_ytdlp():
+                try:
+                    subprocess.run(cmd, check=False, timeout=60)
+                    logging.info("yt-dlp subtitle fetch completed for %s", self._url)
+                except Exception as e:
+                    logging.warning("Background subtitle fetch failed: %s", e)
+            
+            threading.Thread(target=run_ytdlp, daemon=True).start()
+            
+        except Exception as e:
+            logging.warning("Failed to start background subtitle fetch: %s", e)
 
     def _setup_formats(self):
         """Not used for JDownloader downloads."""
@@ -229,6 +268,9 @@ class JDownloaderDownload(BaseDownloader):
         self._start_time = time.time()
         logging.info("JDownloader download started - package: %s, user: %s", self._package_id, user_id)
 
+        # Start background subtitle fetch if enabled
+        self._download_subtitles_background()
+
         # Wrap everything in try/finally to ensure cleanup
         _download_succeeded = False
         try:
@@ -286,7 +328,19 @@ class JDownloaderDownload(BaseDownloader):
             )
 
             logging.info("JDownloader download complete - %d files to upload", len(files))
-            self._upload(files=[str(f) for f in files], meta=meta)
+            
+            # Combine JDownloader files with subtitles from tempdir
+            upload_files = [str(f) for f in files]
+            subtitle_extensions = {'.srt', '.vtt', '.ass', '.sub'}
+            temp_subtitles = [
+                str(f) for f in Path(self._tempdir.name).glob("*") 
+                if f.suffix.lower() in subtitle_extensions
+            ]
+            if temp_subtitles:
+                logging.info("Including %d background subtitles in upload", len(temp_subtitles))
+                upload_files.extend(temp_subtitles)
+                
+            self._upload(files=upload_files, meta=meta)
 
             # 8. Cleanup from JDownloader and disk (success path - delete files)
             _download_succeeded = True

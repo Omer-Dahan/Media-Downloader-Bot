@@ -1,11 +1,17 @@
+import asyncio
 import logging
 import os
 import re
+import sys
 import threading
 import time
 import typing
 from io import BytesIO
 from typing import Any
+
+# Fix for WinError 10022 on Windows (asyncio proactor bug)
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import psutil
 import pyrogram.errors
@@ -37,6 +43,7 @@ from database.model import (
     get_quality_settings,
     get_subtitles_settings,
     get_title_length_settings,
+    get_long_description_settings,
     init_user,
     set_user_settings,
     CreditsExhaustedException,
@@ -720,7 +727,7 @@ def _build_settings_markup(chat_id):
     quality = get_quality_settings(chat_id)  # returns 'high', 'medium', 'low'
     send_format = get_format_settings(chat_id)  # returns 'video', 'document', 'audio'
     subtitles_enabled = get_subtitles_settings(chat_id)  # returns True/False
-    title_length = get_title_length_settings(chat_id)  # returns 100, 250, 500, 1000
+    title_length = get_title_length_settings(chat_id)  # returns 100, 250, 500, 1000, 4000, 0
     
     # Quality display mapping
     quality_display = {
@@ -752,8 +759,11 @@ def _build_settings_markup(chat_id):
         callback_data="toggle_subtitles"
     )
     
+    # Display name for length
+    title_len_display = title_length if title_length != 0 else "ללא הגבלה 🔗"
+    
     title_btn = types.InlineKeyboardButton(
-        f"📑 אורך כותרת: {title_length}",
+        f"📑 אורך תיאור: {title_len_display}",
         callback_data="toggle_title_len"
     )
     
@@ -834,22 +844,40 @@ def toggle_subtitles_callback(client: Client, callback_query: types.CallbackQuer
 
 @app.on_callback_query(filters.regex(r"^toggle_title_len$"))
 def toggle_title_length_callback(client: Client, callback_query: types.CallbackQuery):
-    """Toggle title length: 1000 → 500 → 250 → 100 → 1000"""
+    """Toggle title length: 100 → 250 → 500 → 1000 → 4000 → 100"""
     chat_id = callback_query.message.chat.id
     current = get_title_length_settings(chat_id)
     
-    # Cycle: 1000 → 500 → 250 → 100 → 1000
-    cycle = {1000: 500, 500: 250, 250: 100, 100: 1000}
-    new_length = cycle.get(current, 1000)
+    # Cycle: 100 → 250 → 500 → 1000 → 4000 → 0 (Unlimited) → 100
+    cycle = {100: 250, 250: 500, 500: 1000, 1000: 4000, 4000: 0, 0: 100}
+    new_length = cycle.get(current, 500)
     
     logging.info("Setting %s title_length to %s", chat_id, new_length)
     set_user_settings(chat_id, "title_length", new_length)
-    callback_query.answer(f"✅ אורך כותרת: {new_length} תווים")
+    
+    if new_length == 4000:
+        callback_query.answer(
+            "📋 בחרת בתיאור מלא!\nהתיאור יישלח בהודעה נפרדת מתחת למדיה.", 
+            show_alert=True
+        )
+    elif new_length == 0:
+        callback_query.answer(
+            "🌐 התיאור יישלח כדף Telegraph!\nהקישור יישלח בהודעה נפרדת מתחת למדיה.", 
+            show_alert=True
+        )
+    else:
+        callback_query.answer(f"✅ אורך תיאור: {new_length} תווים")
     
     try:
         callback_query.message.edit_text(BotText.settings, reply_markup=_build_settings_markup(chat_id))
     except pyrogram.errors.MessageNotModified:
         pass
+
+
+@app.on_callback_query(filters.regex(r"^toggle_long_desc$"))
+def toggle_long_desc_callback(client: Client, callback_query: types.CallbackQuery):
+    """Obsolete: redirected to title_length logic."""
+    callback_query.answer("הגדרה זו הוחלפה בהגדרת 'אורך תיאור' (4,000 או ללא הגבלה).", show_alert=True)
 
 
 @app.on_callback_query(filters.regex(r"^ytq:"))

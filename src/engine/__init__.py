@@ -1,5 +1,8 @@
 from urllib.parse import urlparse
 from typing import Any, Callable
+import logging
+
+from database.model import CreditsExhaustedException
 
 from engine.generic import YoutubeDownload
 from engine.direct import DirectDownload
@@ -36,8 +39,20 @@ def googledrive_disabled(client: Any, bot_message: Any, url: str) -> None:
 
 
 def youtube_entrance(client, bot_message, url):
-    youtube = YoutubeDownload(client, bot_message, url)
-    youtube.start()
+    try:
+        youtube = YoutubeDownload(client, bot_message, url)
+        youtube.start()
+    except CreditsExhaustedException:
+        raise
+    except Exception as e:
+        # Check if this is a manual cancellation - don't fallback to JDownloader
+        if "בוטלה" in str(e):
+            logging.info("YouTube download cancelled by user, skipping fallback")
+            return
+            
+        logging.info("youtube_entrance failed for %s, falling back to JDownloader: %s", url, e)
+        # Avoid double notification by using the already existing bot_message
+        jdownloader_entrance(client, bot_message, url)
 
 
 def youtube_entrance_with_quality(client, bot_message, url, quality: str):
@@ -46,8 +61,20 @@ def youtube_entrance_with_quality(client, bot_message, url, quality: str):
     Args:
         quality: One of '1080', '720', '480', '360', 'audio'
     """
-    youtube = YoutubeDownload(client, bot_message, url, selected_quality=quality)
-    youtube.start()
+    try:
+        youtube = YoutubeDownload(client, bot_message, url, selected_quality=quality)
+        youtube.start()
+    except CreditsExhaustedException:
+        raise
+    except Exception as e:
+        # Check if this is a manual cancellation - don't fallback to JDownloader
+        if "בוטלה" in str(e):
+            logging.info("YouTube download (quality) cancelled by user, skipping fallback")
+            return
+            
+        logging.info("youtube_entrance_with_quality failed for %s, falling back to JDownloader: %s", url, e)
+        # Avoid double notification by using the already existing bot_message
+        jdownloader_entrance(client, bot_message, url)
 
 
 def get_youtube_video_info(url: str) -> dict | None:
@@ -126,9 +153,9 @@ DOWNLOADER_MAP: dict[str, Callable[[Any, Any, str], Any]] = {
     "instagram.com": instagram_handler,
     "reddit.com": reddit_handler,
     "redd.it": reddit_handler,
-    "tiktok.com": jdownloader_entrance,
-    "vt.tiktok.com": jdownloader_entrance,
-    "xhamster.com": jdownloader_entrance,
+    "tiktok.com": tiktok_handler,
+    "vt.tiktok.com": tiktok_handler,
+    "xhamster.com": youtube_entrance,
     # Google services (TEMPORARILY DISABLED)
     "drive.google.com": googledrive_disabled,
     "docs.google.com": googledrive_disabled,
@@ -166,10 +193,32 @@ def special_download_entrance(client: Any, bot_message: Any, url: str) -> Any:
     # Iterate through the map to find a matching handler.
     for domain_suffix, handler_function in DOWNLOADER_MAP.items():
         if hostname.endswith(domain_suffix):
-            return handler_function(client, bot_message, url)
+            try:
+                return handler_function(client, bot_message, url)
+            except Exception as e:
+                # Check if this is a manual cancellation - don't fallback to JDownloader
+                if "בוטלה" in str(e):
+                    logging.info("Specialized download cancelled by user, skipping fallback")
+                    return
+                
+                # If specialized downloader fails, fallback to JDownloader (unless it WAS JDownloader)
+                if handler_function != jdownloader_entrance:
+                    logging.info("Specialized downloader %s failed for %s, falling back to JDownloader: %s", 
+                                 handler_function.__name__, url, e)
+                    return jdownloader_entrance(client, bot_message, url)
+                raise
 
-    # Check if URL contains media extension - use JDownloader (handles auth, redirects better)
+    # Check if URL contains media extension - try yt-dlp first
     if is_direct_download_url(url):
-        return jdownloader_entrance(client, bot_message, url)
+        try:
+             return youtube_entrance(client, bot_message, url)
+        except Exception as e:
+             # Check if this is a manual cancellation - don't fallback to JDownloader
+             if "בוטלה" in str(e):
+                 logging.info("Direct link (yt-dlp) cancelled by user, skipping fallback")
+                 return
+             
+             logging.info("yt-dlp failed for direct link %s, falling back to JDownloader: %s", url, e)
+             return jdownloader_entrance(client, bot_message, url)
 
     raise ValueError(f"לא נמצא מוריד מתאים עבור: {hostname}")

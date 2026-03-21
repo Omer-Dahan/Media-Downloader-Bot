@@ -210,6 +210,45 @@ JDOWNLOADER_DEVICE_NAME=your_device_name
 python src/main.py
 ```
 
+### 🐧 Linux Server Deployment (Background Service)
+
+To run the bot in the background continuously on a Linux server and ensure it restarts automatically if the server reboots, you can set it up as a `systemd` service.
+
+1. **Create a systemd service file**:
+   ```bash
+   sudo nano /etc/systemd/system/media-downloader.service
+   ```
+
+2. **Paste the following configuration** (modify the paths and user accordingly):
+   ```ini
+   [Unit]
+   Description=Media Downloader Telegram Bot
+   After=network.target
+
+   [Service]
+   Type=simple
+   User=your_linux_user
+   WorkingDirectory=/path/to/media-downloader-bot
+   ExecStart=/path/to/media-downloader-bot/venv/bin/python src/main.py
+   Restart=always
+   RestartSec=10
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+3. **Enable and start the service**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable media-downloader
+   sudo systemctl start media-downloader
+   ```
+
+4. **View logs**:
+   ```bash
+   sudo journalctl -u media-downloader -f
+   ```
+
 ---
 
 ## 🤖 Available Commands

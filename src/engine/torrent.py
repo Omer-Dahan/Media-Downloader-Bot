@@ -323,16 +323,6 @@ class TorrentDownload(BaseDownloader):
             self.edit_text(f"❌ {e}")
             raise ValueError(str(e))
             
-        except ValueError as e:
-            # Cancellation or other value errors
-            error_msg = str(e)
-            if "בוטלה" in error_msg or "cancelled" in error_msg.lower():
-                try:
-                    self.edit_text("🛑 ההורדה בוטלה בהצלחה")
-                except Exception:
-                    pass  # Message edit might fail, that's ok
-            raise
-            
         finally:
             # Always cleanup - remove from qBittorrent and tracking
             if self._manager and self._torrent_hash:

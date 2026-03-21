@@ -31,6 +31,11 @@ class PaymentStatus:
 Base = declarative_base()
 
 
+class CreditsExhaustedException(Exception):
+    """Exception raised when a user has run out of download credits."""
+    pass
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -141,9 +146,15 @@ def get_title_length_settings(tgid) -> int:
     """Get user's preferred title length for captions."""
     with session_manager() as session:
         user = session.query(User).filter(User.user_id == tgid).first()
-        if user and user.settings and user.settings.title_length:
+        if user and user.settings and user.settings.title_length is not None:
             return user.settings.title_length
         return 500  # Default to 500 chars
+
+
+def get_long_description_settings(tgid) -> bool:
+    """Check if user wants full description in separate message."""
+    # Column removed to avoid DB issues, using title_length instead
+    return False
 
 
 def set_user_settings(tgid: int, key: str, value):
@@ -205,9 +216,7 @@ def get_total_credits(uid: int) -> int:
         return FREE_DOWNLOAD
 
 
-class CreditsExhaustedException(Exception):
-    """Raised when user has no credits remaining."""
-    pass
+
 
 
 def check_quota(uid: int):
@@ -451,4 +460,7 @@ def delete_user(uid: int):
         user = session.query(User).filter(User.user_id == uid).first()
         if user:
             session.delete(user)
+
+
+
 

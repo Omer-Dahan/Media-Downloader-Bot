@@ -10,7 +10,7 @@ from config import AUDIO_FORMAT, ARCHIVE_CHANNEL, ENABLE_ARIA2
 from utils import is_youtube
 from database.model import get_format_settings, get_quality_settings, get_total_credits, CreditsExhaustedException
 from engine.base import BaseDownloader
-from engine.helper import extract_title_from_info
+from engine.helper import extract_metadata_from_info
 from engine.network_errors import NetworkError, is_network_error, YTDLP_NETWORK_PATTERNS
 
 # Get absolute path to cookies file (relative to src directory)
@@ -142,26 +142,40 @@ def run_ytdlp_pip_upgrade() -> tuple[bool, str]:
 def auto_update_ytdlp() -> bool:
     """Check for and install yt-dlp updates automatically on startup.
     
-    Returns True if an update was installed, False otherwise.
+    Returns True if an update was installed and bot should restart, False otherwise.
     """
+    global _ytdlp_update_attempted
+    # Don't check again if already checked in this process (e.g. triggered by error)
+    if _ytdlp_update_attempted:
+        return False
+        
     current_version = get_ytdlp_version()
-    logging.info("🔍 Checking for yt-dlp updates (current: %s)...", current_version)
+    
+    # First check if update is available via pip index (fast)
+    update_available, current, latest = check_ytdlp_update_available()
+    
+    if not update_available:
+        logging.info("✅ yt-dlp is up to date (%s)", current_version)
+        _ytdlp_update_attempted = True
+        return False
+        
+    logging.info("🔍 New yt-dlp version found: %s -> %s. Updating...", current_version, latest)
     
     try:
+        _ytdlp_update_attempted = True
         is_success, output = run_ytdlp_pip_upgrade()
         
-        # Check if an actual update happened (pip says "Successfully installed")
-        if is_success:
-            # Extract new version from pip output
-            import re
-            version_match = re.search(r"yt-dlp-(\S+)", output)
-            new_version = version_match.group(1) if version_match else "unknown"
-            
-            logging.info("✅ yt-dlp updated: %s → %s", current_version, new_version)
+        # Verify with actual installed version check
+        new_version = get_ytdlp_version()
+        
+        if is_success and new_version != current_version:
+            logging.info("✅ yt-dlp updated successfully! %s → %s", current_version, new_version)
             save_update_info(current_version, new_version)
+            # On startup, we should restart to ensure the new library is loaded
+            restart_bot()
             return True
         else:
-            logging.info("✅ yt-dlp is up to date (%s)", current_version)
+            logging.info("✅ yt-dlp check finished, no version change detected (current: %s)", new_version)
             return False
             
     except subprocess.TimeoutExpired:
@@ -228,60 +242,10 @@ def restart_bot():
 def try_update_ytdlp() -> bool:
     """Try to update yt-dlp to the latest version.
     If an update is available, installs it and restarts the bot.
-    Only attempts update once per session.
     Returns True if update was installed (bot will restart), False otherwise.
     """
-    global _ytdlp_update_attempted
-    
-    if _ytdlp_update_attempted:
-        logging.info("yt-dlp update already attempted this session, skipping")
-        return False
-    
-    _ytdlp_update_attempted = True
-    
-    # First check if update is available
-    update_available, current_ver, latest_ver = check_ytdlp_update_available()
-    logging.info("yt-dlp version check: current=%s, latest=%s, update_available=%s", 
-                 current_ver, latest_ver, update_available)
-    
-    if not update_available:
-        logging.info("yt-dlp is already up to date (version %s)", current_ver)
-        return False
-    
-    logging.info("yt-dlp update available: %s -> %s, installing...", current_ver, latest_ver)
-    
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
-            capture_output=True,
-            text=True,
-            timeout=120  # 2 minute timeout
-        )
-        
-        if result.returncode == 0:
-            new_version = get_ytdlp_version()
-            logging.info("yt-dlp updated successfully! %s -> %s", current_ver, new_version)
-            
-            # Verify the update actually happened
-            if new_version != current_ver:
-                logging.info("Update verified, restarting bot to apply changes...")
-                # Save update info for notification after restart
-                save_update_info(current_ver, new_version)
-                restart_bot()
-                # If restart_bot returns (shouldn't happen with execv), return True
-                return True
-            else:
-                logging.warning("Version unchanged after update, no restart needed")
-                return False
-        else:
-            logging.error("yt-dlp update failed: %s", result.stderr)
-            return False
-    except subprocess.TimeoutExpired:
-        logging.error("yt-dlp update timed out")
-        return False
-    except Exception as e:
-        logging.error("yt-dlp update failed with exception: %s", e)
-        return False
+    # Simply call the auto_update_ytdlp function which now handles both cases robustly
+    return auto_update_ytdlp()
 
 
 def is_extraction_error(error_msg: str) -> bool:
@@ -542,10 +506,11 @@ class YoutubeDownload(BaseDownloader):
                     # Use extract_info with download=True to get title and download in one operation
                     info = ydl.extract_info(self._url, download=True)
                     if info:
-                        title = extract_title_from_info(info)
-                        if title:
-                            self._video_title = title
-                            logging.info("Extracted title (%d chars): %s", len(title), title[:100] if len(title) > 100 else title)
+                        meta = extract_metadata_from_info(info)
+                        if meta.get("title"):
+                            self._video_title = meta["title"]
+                            self._video_description = meta["description"]
+                            logging.info("Extracted title (%d chars): %s", len(self._video_title), self._video_title[:100])
                 # Get media files only - exclude .part files, thumbnails, and subtitle files
                 # Thumbnails (.jpg, .webp) should not count as successful downloads
                 video_extensions = {'.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.m4v'}
@@ -703,9 +668,3 @@ class YoutubeDownload(BaseDownloader):
                 quality=e.quality,
                 download_type="youtube"
             )
-        except ValueError as e:
-            # Check if this is a cancellation
-            if "בוטלה" in str(e):
-                self._bot_msg.edit_text("🛑 ההורדה בוטלה בהצלחה")
-            else:
-                raise

@@ -5,7 +5,7 @@ import yt_dlp
 
 from RedDownloader import RedDownloader as RD
 from engine.base import BaseDownloader
-from engine.helper import extract_title_from_info
+from engine.helper import extract_metadata_from_info
 
 
 class RedditDownload(BaseDownloader):
@@ -51,13 +51,14 @@ class RedditDownload(BaseDownloader):
                 info = ydl.extract_info(url, download=True)
                 if info:
                     self._format = "video"
-                    title = extract_title_from_info(info)
-                    if title:
-                        self._video_title = title
-                        logging.info("Reddit: Extracted title (%d chars): %s", len(title), title[:100] if len(title) > 100 else title)
+                    meta = extract_metadata_from_info(info)
+                    if meta.get("title"):
+                        self._video_title = meta["title"]
+                        self._video_description = meta["description"]
+                        logging.info("Reddit: Extracted title (%d chars): %s", len(self._video_title), self._video_title[:100])
                     
-            # Find downloaded files
-            return [str(f) for f in pathlib.Path(self._tempdir.name).glob("*") if f.is_file()]
+            # Find downloaded files recursively
+            return [str(f) for f in pathlib.Path(self._tempdir.name).rglob("*") if f.is_file()]
         except Exception as e:
             logging.error("yt-dlp fallback failed: %s", e)
             return []
@@ -85,18 +86,10 @@ class RedditDownload(BaseDownloader):
             except AttributeError:
                 logging.warning("Could not get media type from RedDownloader")
             
-            # Check if files were downloaded
-            temp_path = pathlib.Path(self._tempdir.name)
-            gallery_folder = temp_path / "reddit_media"
-            
-            if gallery_folder.is_dir():
-                for file in gallery_folder.iterdir():
-                    if file.is_file():
-                        video_paths.append(str(file))
-            else:
-                for file in temp_path.iterdir():
-                    if file.is_file():
-                        video_paths.append(str(file))
+            # Find all files in temp dir recursively, filtering for files only
+            for file in pathlib.Path(self._tempdir.name).rglob("*"):
+                if file.is_file():
+                    video_paths.append(str(file))
                         
         except Exception as e:
             logging.warning("RedDownloader failed: %s", e)

@@ -321,13 +321,3 @@ class DirectDownload(BaseDownloader):
                 partial_file=e.partial_file_path,
                 download_type="direct"
             )
-        except ValueError as e:
-            # Check if this is a cancellation
-            if "בוטלה" in str(e):
-                logging.info("Cancellation confirmed, updating message")
-                try:
-                    self._bot_msg.edit_text("🛑 ההורדה בוטלה בהצלחה")
-                except Exception as edit_err:
-                    logging.error("Failed to edit cancellation message: %s", edit_err)
-            else:
-                raise

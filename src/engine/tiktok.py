@@ -110,10 +110,10 @@ class TikTokDownload(BaseDownloader):
                     else:
                         logging.warning("TikTok: No title found in info dict!")
 
-            files = list(pathlib.Path(self._tempdir.name).glob("*"))
+            files = [f for f in pathlib.Path(self._tempdir.name).rglob("*") if f.is_file()]
             if files:
                 logging.info("TikTok: yt-dlp succeeded!")
-                return [str(f) for f in files if f.is_file()]
+                return [str(f) for f in files]
         except Exception as e:
             logging.warning("TikTok: yt-dlp failed: %s", e)
 
@@ -149,19 +149,18 @@ class TikTokDownload(BaseDownloader):
             download_job = job.DownloadJob(url)
             download_job.run()
             
-            # Collect downloaded files
-            all_files = list(pathlib.Path(self._tempdir.name).glob("*"))
+            # Collect downloaded files recursively
+            all_files = [f for f in pathlib.Path(self._tempdir.name).rglob("*") if f.is_file()]
             
             image_files = []
             audio_file = None
             
             for f in all_files:
-                if f.is_file():
-                    ext = f.suffix.lower()
-                    if ext in ['.jpg', '.jpeg', '.png', '.webp']:
-                        image_files.append(str(f))
-                    elif ext in ['.mp3', '.m4a', '.aac', '.wav', '.ogg']:
-                        audio_file = str(f)
+                ext = f.suffix.lower()
+                if ext in ['.jpg', '.jpeg', '.png', '.webp']:
+                    image_files.append(str(f))
+                elif ext in ['.mp3', '.m4a', '.aac', '.wav', '.ogg']:
+                    audio_file = str(f)
             
             if image_files:
                 logging.info("TikTok: gallery-dl found %d images and audio=%s", 
