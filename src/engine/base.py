@@ -12,7 +12,7 @@ from typing import final
 
 import ffmpeg
 import filetype
-from pyrogram import enums, types
+from pyrogram import enums, types, StopTransmission
 from tqdm import tqdm
 
 from config import TG_NORMAL_MAX_SIZE, MAX_DOWNLOAD_SIZE, Types, ARCHIVE_CHANNEL
@@ -164,7 +164,10 @@ class BaseDownloader(ABC):
             self.edit_text(text)
 
     def upload_hook(self, current, total):
-        self.check_for_cancel()
+        try:
+            self.check_for_cancel()
+        except ValueError as e:
+            raise StopTransmission() from e
         
         import time
         
@@ -1092,9 +1095,9 @@ class BaseDownloader(ABC):
             else:
                 self._start()
                 # Credits are charged in _upload() - no need to charge again here
-        except ValueError as e:
+        except (ValueError, StopTransmission) as e:
             # Check if this is a manual cancellation
-            if "בוטלה" in str(e):
+            if isinstance(e, StopTransmission) or "בוטלה" in str(e):
                 logging.info("Operation cancelled by user: %s", self._url)
                 try:
                     # Only edit if it wasn't already updated by someone else

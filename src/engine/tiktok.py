@@ -140,6 +140,9 @@ class TikTokDownload(BaseDownloader):
             config.set(("extractor",), "directory", [])  # No subdirectories
             config.set(("extractor", "tiktok"), "videos", True)  # Include audio
             
+            # Reduce retries to 0 so we immediately fall back to JDownloader if TikTok blocks
+            config.set(("extractor",), "retries", 0)
+            
             # Add cookies if available
             if TIKTOK_COOKIES_FILE and pathlib.Path(TIKTOK_COOKIES_FILE).exists():
                 logging.info("TikTok: Using cookies for gallery-dl: %s", TIKTOK_COOKIES_FILE)
@@ -259,36 +262,8 @@ class TikTokDownload(BaseDownloader):
             self._format = "video"
             return files
         
-        # All methods failed - report to archive channel and show error to user
-        error_msg = "הורדה מ-TikTok נכשלה!"
-        self._bot_msg.edit_text(
-            f"❌ {error_msg}\n\n"
-            "TikTok חוסם הורדות לפעמים. נסה שוב מאוחר יותר."
-        )
-        
-        # Send error report to archive channel
-        if ARCHIVE_CHANNEL:
-            try:
-                from engine.helper import get_user_display_name
-                user_display = get_user_display_name(self._from_user)
-                
-                report = (
-                    f"❌ **דיווח שגיאה**\n"
-                    f"👤 משתמש: {user_display}\n"
-                    f"🆔 {self._from_user}\n"
-                    f"🔗 קישור ישיר: {self._original_url}\n"
-                    f"🔗 קישור מפורט: {self._resolved_url}\n"
-                    f"⚠️ שגיאה: {error_msg}"
-                )
-                self._client.send_message(
-                    chat_id=ARCHIVE_CHANNEL, 
-                    text=report,
-                    link_preview_options=types.LinkPreviewOptions(is_disabled=True)
-                )
-            except Exception as e:
-                logging.warning("Failed to send error to archive: %s", e)
-        
-        return []  # Return empty, error already reported
+        # All methods failed - raise exception to trigger JDownloader fallback
+        raise ValueError("הורדה מ-TikTok נכשלה מכל השיטות (yt-dlp, gallery-dl, API).")
 
     def _get_archive_caption(self, files: list) -> str:
         """Create custom archive caption with both TikTok URLs."""
