@@ -131,26 +131,26 @@ class TikTokDownload(BaseDownloader):
         try:
             logging.info("TikTok: Downloading slideshow with gallery-dl: %s", url)
             
-            # Use gallery-dl programmatically
-            from gallery_dl import config, job
+            import subprocess
+            import sys
+            cmd = [
+                "gallery-dl",
+                "--clear-cache", "tiktok",
+                "--base-directory", self._tempdir.name,
+                "--config", "{}",
+                "--set", "extractor.directory=[]",
+                "--set", "extractor.tiktok.videos=true",
+                "--set", "extractor.retries=0"
+            ]
             
-            # Configure gallery-dl
-            config.clear()
-            config.set(("extractor",), "base-directory", self._tempdir.name)
-            config.set(("extractor",), "directory", [])  # No subdirectories
-            config.set(("extractor", "tiktok"), "videos", True)  # Include audio
-            
-            # Reduce retries to 0 so we immediately fall back to JDownloader if TikTok blocks
-            config.set(("extractor",), "retries", 0)
-            
-            # Add cookies if available
             if TIKTOK_COOKIES_FILE and pathlib.Path(TIKTOK_COOKIES_FILE).exists():
-                logging.info("TikTok: Using cookies for gallery-dl: %s", TIKTOK_COOKIES_FILE)
-                config.set(("extractor",), "cookies", [TIKTOK_COOKIES_FILE])
+                logging.info("TikTok: Using cookies file for gallery-dl: %s", TIKTOK_COOKIES_FILE)
+                cmd.extend(["--cookies", TIKTOK_COOKIES_FILE])
             
-            # Run the download job
-            download_job = job.DownloadJob(url)
-            download_job.run()
+            cmd.append(url)
+            
+            # Run the download job as a subprocess to avoid gallery-dl programmatic config bugs
+            subprocess.run(cmd, check=False, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0) if sys.platform == 'win32' else 0)
             
             # Collect downloaded files recursively
             all_files = [f for f in pathlib.Path(self._tempdir.name).rglob("*") if f.is_file()]

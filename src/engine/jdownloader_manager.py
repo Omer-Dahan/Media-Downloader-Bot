@@ -153,9 +153,9 @@ class JDownloaderManager:
 
     # Known non-media extensions to always reject
     JUNK_EXTENSIONS = (
-        ".webmanifest", ".json", ".xml", ".html", ".htm", ".css", ".js",
-        ".ico", ".svg", ".txt", ".pdf", ".woff", ".woff2", ".ttf", ".eot",
-        ".map", ".php", ".asp", ".jsp", ".log",
+        ".webmanifest", ".html", ".htm", ".css", ".js",
+        ".woff", ".woff2", ".ttf", ".eot", ".map", 
+        ".php", ".asp", ".jsp",
     )
 
     def add_link(self, url: str, user_id: int) -> int:
@@ -289,8 +289,8 @@ class JDownloaderManager:
                 surviving = len(links) - len(junk_to_remove)
                 if surviving == 0:
                     raise JDownloaderError(
-                        "לא נמצאו קבצי וידאו בקישור. "
-                        "JDownloader מצא תוכן אך ללא פורמט וידאו מוכר."
+                        "לא נמצאו קבצים מוכרים בקישור. "
+                        "JDownloader מצא תוכן אך ללא פורמט נתמך."
                     )
 
                 names = [lnk.get("name", "?") for lnk in links if lnk.get("uuid") not in junk_to_remove]
@@ -313,8 +313,8 @@ class JDownloaderManager:
             remaining = len(links) - len(links_to_remove)
             if remaining == 0:
                 raise JDownloaderError(
-                    "לא נמצאו קבצי וידאו בקישור. "
-                    "JDownloader מצא תוכן אך ללא פורמט וידאו מוכר."
+                    "לא נמצאו קבצים מוכרים בקישור. "
+                    "JDownloader מצא תוכן אך ללא פורמט נתמך."
                 )
 
             logging.info("%d video link(s) kept in JD package %s", remaining, package_id)
