@@ -1,4 +1,5 @@
 import os
+import tempfile
 
 
 def get_env(name: str, default=None):
@@ -36,7 +37,9 @@ PROVIDER_TOKEN = get_env("PROVIDER_TOKEN")
 FREE_DOWNLOAD = get_env("FREE_DOWNLOAD", 3)
 TOKEN_PRICE = get_env("TOKEN_PRICE", 10)  # 1 USD=10 downloads
 FREE_BANDWIDTH = get_env("FREE_BANDWIDTH", 2147483648)  # 2GB in bytes
-ARCHIVE_CHANNEL = int(get_env("ARCHIVE_CHANNEL")) if get_env("ARCHIVE_CHANNEL") else None  # Channel to forward downloads to
+ARCHIVE_CHANNEL = (
+    int(get_env("ARCHIVE_CHANNEL")) if get_env("ARCHIVE_CHANNEL") else None
+)  # Channel to forward downloads to
 
 
 # For advance users
@@ -67,21 +70,25 @@ QBITTORRENT_USERNAME = get_env("QBITTORRENT_USERNAME", "admin")
 QBITTORRENT_PASSWORD = get_env("QBITTORRENT_PASSWORD", "adminadmin")
 
 # Torrent feature settings
-TORRENT_MIN_CREDITS = get_env("TORRENT_MIN_CREDITS", 500)        # Gate requirement
-TORRENT_STALL_TIMEOUT = get_env("TORRENT_STALL_TIMEOUT", 600)    # 10 minutes
-TORRENT_GLOBAL_TIMEOUT = get_env("TORRENT_GLOBAL_TIMEOUT", 7200) # 2 hours
-TORRENT_MAX_PER_USER = get_env("TORRENT_MAX_PER_USER", 1)        # Active per user
-TORRENT_MAX_GLOBAL = get_env("TORRENT_MAX_GLOBAL", 5)            # Global cap
+TORRENT_MIN_CREDITS = get_env("TORRENT_MIN_CREDITS", 500)  # Gate requirement
+TORRENT_STALL_TIMEOUT = get_env("TORRENT_STALL_TIMEOUT", 600)  # 10 minutes
+TORRENT_GLOBAL_TIMEOUT = get_env("TORRENT_GLOBAL_TIMEOUT", 7200)  # 2 hours
+TORRENT_MAX_PER_USER = get_env("TORRENT_MAX_PER_USER", 1)  # Active per user
+TORRENT_MAX_GLOBAL = get_env("TORRENT_MAX_GLOBAL", 5)  # Global cap
 
 # JDownloader2 settings (my.jdownloader.org)
 JDOWNLOADER_EMAIL = get_env("JDOWNLOADER_EMAIL")
 JDOWNLOADER_PASSWORD = get_env("JDOWNLOADER_PASSWORD")
 JDOWNLOADER_DEVICE_NAME = get_env("JDOWNLOADER_DEVICE_NAME")
-JDOWNLOADER_DOWNLOAD_DIR = get_env("JDOWNLOADER_DOWNLOAD_DIR", "/tmp/jdownloader")
+JDOWNLOADER_DOWNLOAD_DIR = get_env(
+    "JDOWNLOADER_DOWNLOAD_DIR", os.path.join(tempfile.gettempdir(), "jdownloader")
+)
 
 # JDownloader feature settings
-JDOWNLOADER_POLL_INTERVAL = get_env("JDOWNLOADER_POLL_INTERVAL", 5)       # Seconds between checks
-JDOWNLOADER_STALL_TIMEOUT = get_env("JDOWNLOADER_STALL_TIMEOUT", 300)    # 5 minutes
-JDOWNLOADER_GLOBAL_TIMEOUT = get_env("JDOWNLOADER_GLOBAL_TIMEOUT", 7200) # 2 hours
+JDOWNLOADER_POLL_INTERVAL = get_env(
+    "JDOWNLOADER_POLL_INTERVAL", 5
+)  # Seconds between checks
+JDOWNLOADER_STALL_TIMEOUT = get_env("JDOWNLOADER_STALL_TIMEOUT", 300)  # 5 minutes
+JDOWNLOADER_GLOBAL_TIMEOUT = get_env("JDOWNLOADER_GLOBAL_TIMEOUT", 7200)  # 2 hours
 JDOWNLOADER_MAX_PER_USER = get_env("JDOWNLOADER_MAX_PER_USER", 1)
 JDOWNLOADER_MAX_GLOBAL = get_env("JDOWNLOADER_MAX_GLOBAL", 3)

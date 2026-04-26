@@ -1,9 +1,8 @@
-import tempfile
-import pathlib
 import re
 from urllib.parse import urlparse
 from engine.helper import handle_download_error
 from engine.direct import DirectDownload
+
 
 def pixeldrain_download(client, bot_message, url):
     FILE_URL_FORMAT = "https://pixeldrain.com/api/file/{}?download"
@@ -14,8 +13,8 @@ def pixeldrain_download(client, bot_message, url):
             return match.group(1)
 
         parsed = urlparse(url)
-        if parsed.path.startswith('/file/'):
-            return parsed.path.split('/')[-1]
+        if parsed.path.startswith("/file/"):
+            return parsed.path.split("/")[-1]
 
         raise ValueError("פורמט קישור Pixeldrain לא תקין")
 
@@ -32,6 +31,5 @@ def pixeldrain_download(client, bot_message, url):
 
         except ValueError as e:
             handle_download_error(bot_message, e)
-
 
     _download(url)

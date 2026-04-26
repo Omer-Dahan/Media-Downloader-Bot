@@ -1,3 +1,4 @@
+# pylint: disable=wrong-import-position
 import logging
 
 from dotenv import load_dotenv

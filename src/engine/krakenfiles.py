@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 from engine.helper import handle_download_error
 from engine.direct import DirectDownload
 
+
 def krakenfiles_download(client, bot_message, url: str):
     session = requests.Session()
 
@@ -57,6 +58,5 @@ def krakenfiles_download(client, bot_message, url: str):
 
         except ValueError as e:
             handle_download_error(bot_message, e)
-
 
     _download(url)

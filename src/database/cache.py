@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import threading
@@ -13,6 +12,7 @@ Base = declarative_base()
 
 class VideoCache(Base):
     """SQLite-based video cache table."""
+
     __tablename__ = "video_cache"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -31,7 +31,7 @@ _lock = threading.Lock()
 def _get_session():
     """Get or create the SQLite session factory."""
     global _engine, _SessionFactory
-    
+
     if _SessionFactory is None:
         with _lock:
             if _SessionFactory is None:
@@ -43,26 +43,28 @@ def _get_session():
                 except Exception as e:
                     logging.error("Failed to initialize database: %s", e)
                     raise
-                    
+
     return _SessionFactory()
 
 
 class Redis:
     """SQLite-based cache that mimics the Redis interface."""
-    
+
     def __init__(self):
         # Ensure table exists
         _get_session().close()
         logging.info("Using SQLite-based video cache")
-    
+
     def __del__(self):
         pass
-    
+
     def add_cache(self, key: str, mapping: dict):
         """Add or update a cache entry."""
         session = _get_session()
         try:
-            existing = session.query(VideoCache).filter(VideoCache.cache_key == key).first()
+            existing = (
+                session.query(VideoCache).filter(VideoCache.cache_key == key).first()
+            )
             if existing:
                 existing.file_id = mapping.get("file_id", "[]")
                 existing.meta = mapping.get("meta", "{}")
@@ -71,7 +73,7 @@ class Redis:
                 cache_entry = VideoCache(
                     cache_key=key,
                     file_id=mapping.get("file_id", "[]"),
-                    meta=mapping.get("meta", "{}")
+                    meta=mapping.get("meta", "{}"),
                 )
                 session.add(cache_entry)
             session.commit()
@@ -81,30 +83,31 @@ class Redis:
             logging.error("Failed to save cache: %s", e)
         finally:
             session.close()
-    
+
     def get_cache(self, key: str) -> dict:
         """Get a cache entry by key."""
         session = _get_session()
         try:
-            entry = session.query(VideoCache).filter(VideoCache.cache_key == key).first()
+            entry = (
+                session.query(VideoCache).filter(VideoCache.cache_key == key).first()
+            )
             if entry:
                 logging.info("Cache hit for key: %s", key[:16])
-                return {
-                    "file_id": entry.file_id,
-                    "meta": entry.meta
-                }
+                return {"file_id": entry.file_id, "meta": entry.meta}
             return {}
         except Exception as e:
             logging.error("Failed to get cache: %s", e)
             return {}
         finally:
             session.close()
-    
+
     def delete_cache(self, key: str) -> bool:
         """Delete a cache entry by key."""
         session = _get_session()
         try:
-            deleted = session.query(VideoCache).filter(VideoCache.cache_key == key).delete()
+            deleted = (
+                session.query(VideoCache).filter(VideoCache.cache_key == key).delete()
+            )
             session.commit()
             if deleted:
                 logging.info("Cache deleted for key: %s", key[:16])

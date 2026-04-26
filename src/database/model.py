@@ -33,7 +33,10 @@ Base = declarative_base()
 
 class CreditsExhaustedException(Exception):
     """Exception raised when a user has run out of download credits."""
-    pass
+
+
+class BandwidthExhaustedException(Exception):
+    """Exception raised when a free user has reached their daily bandwidth limit."""
 
 
 class User(Base):
@@ -50,18 +53,26 @@ class User(Base):
     is_blocked = Column(Integer, default=0)  # 0 = active, 1 = blocked
     config = Column(JSON)
 
-    settings = relationship("Setting", back_populates="user", cascade="all, delete-orphan", uselist=False)
-    payments = relationship("Payment", back_populates="user", cascade="all, delete-orphan")
+    settings = relationship(
+        "Setting", back_populates="user", cascade="all, delete-orphan", uselist=False
+    )
+    payments = relationship(
+        "Payment", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Setting(Base):
     __tablename__ = "settings"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    quality = Column(Enum("high", "medium", "low", "audio", "custom"), nullable=False, default="high")
+    quality = Column(
+        Enum("high", "medium", "low", "audio", "custom"), nullable=False, default="high"
+    )
     format = Column(Enum("video", "audio", "document"), nullable=False, default="video")
     subtitles = Column(Integer, nullable=False, default=0)  # 0 = off, 1 = on
-    title_length = Column(Integer, nullable=False, default=500)  # Max chars for caption title: 100, 250, 500, 1000
+    title_length = Column(
+        Integer, nullable=False, default=500
+    )  # Max chars for caption title: 100, 250, 500, 1000
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
     user = relationship("User", back_populates="settings")
@@ -109,7 +120,7 @@ def session_manager():
     try:
         yield s
         s.commit()
-    except Exception as e:
+    except Exception:
         s.rollback()
         raise
     finally:
@@ -193,7 +204,6 @@ def get_paid_quota(uid: int):
     return math.inf
 
 
-
 def add_paid_quota(uid: int, amount: int):
     with session_manager() as session:
         data = session.query(User).filter(User.user_id == uid).first()
@@ -208,7 +218,7 @@ def get_total_credits(uid: int) -> int:
     """Get total available credits (free + paid) for a user."""
     if not ENABLE_VIP:
         return math.inf
-    
+
     with session_manager() as session:
         data = session.query(User).filter(User.user_id == uid).first()
         if data:
@@ -216,13 +226,10 @@ def get_total_credits(uid: int) -> int:
         return FREE_DOWNLOAD
 
 
-
-
-
 def check_quota(uid: int):
     if not ENABLE_VIP:
         return
-    
+
     # Owners are exempt from quota limits
     if uid in OWNER:
         return
@@ -237,8 +244,10 @@ def check_quota(uid: int):
             if (data.free + data.paid) <= 0:
                 raise CreditsExhaustedException("הקרדיטים שלך נגמרו.")
             # Check bandwidth limit
-            if data.bandwidth_used >= FREE_BANDWIDTH:
-                raise Exception("הגעת למגבלת 2GB ליום. אנא המתן עד מחר")
+            if data.paid <= 0 and data.bandwidth_used >= FREE_BANDWIDTH:
+                raise BandwidthExhaustedException(
+                    "הגעת למגבלת 2GB יומית למשתמשים חינמיים.\nלרכישת חבילה ללא הגבלה שלח /buy"
+                )
 
 
 def use_quota(uid: int):
@@ -259,32 +268,32 @@ def use_quota(uid: int):
 
 def use_quota_dynamic(uid: int, file_sizes: list[int] | int) -> int:
     """Deduct credits based on file sizes.
-    
+
     Args:
         uid: User ID
         file_sizes: List of file sizes in bytes, or single file size for backwards compatibility
-        
+
     Returns:
         Remaining credits after deduction
-        
+
     Deduction rules:
         - 1 credit per 200MB (rounded up)
         - Example: 400MB = 2 credits, 1GB = 5 credits
     """
     if not ENABLE_VIP:
         return math.inf
-    
+
     # Handle backwards compatibility - single int becomes list
     if isinstance(file_sizes, int):
         file_sizes = [file_sizes] if file_sizes > 0 else []
-    
+
     # Calculate total size in MB
     total_size_bytes = sum(file_sizes)
     total_size_mb = total_size_bytes / (1024 * 1024)
-    
+
     # 1 credit per 200MB, minimum 1 credit if any files
     credits_to_deduct = max(1, math.ceil(total_size_mb / 200)) if file_sizes else 0
-    
+
     with session_manager() as session:
         user = session.query(User).filter(User.user_id == uid).first()
         if user:
@@ -296,10 +305,15 @@ def use_quota_dynamic(uid: int, file_sizes: list[int] | int) -> int:
                     user.paid -= 1
                 else:
                     break  # No more credits to deduct
-            
+
             remaining = (user.free or 0) + (user.paid or 0)
-            logging.info("User %s: deducted %d credits (%d files), remaining: %d", 
-                        uid, credits_to_deduct, len(file_sizes), remaining)
+            logging.info(
+                "User %s: deducted %d credits (%d files), remaining: %d",
+                uid,
+                credits_to_deduct,
+                len(file_sizes),
+                remaining,
+            )
             return remaining
         return 0
 
@@ -317,8 +331,6 @@ def init_user(uid: int, first_name: str = None, username: str = None):
                 user.username = username
 
 
-
-
 def add_bandwidth_used(uid: int, size: int):
     """Add bandwidth usage for a user (in bytes)"""
     if not ENABLE_VIP:
@@ -328,8 +340,15 @@ def add_bandwidth_used(uid: int, size: int):
         user = session.query(User).filter(User.user_id == uid).first()
         if user:
             user.bandwidth_used += size
-            user.total_bandwidth = (user.total_bandwidth or 0) + size  # All-time tracking
-            logging.info("User %s bandwidth usage: %s bytes (total: %s)", uid, user.bandwidth_used, user.total_bandwidth)
+            user.total_bandwidth = (
+                user.total_bandwidth or 0
+            ) + size  # All-time tracking
+            logging.info(
+                "User %s bandwidth usage: %s bytes (total: %s)",
+                uid,
+                user.bandwidth_used,
+                user.total_bandwidth,
+            )
 
 
 def credit_account(who, total_amount: int, quota: int, transaction, method="stripe"):
@@ -338,7 +357,9 @@ def credit_account(who, total_amount: int, quota: int, transaction, method="stri
         if user:
             dollar = total_amount / 100
             user.paid += quota
-            logging.info("user %d credited with %d tokens, payment:$%.2f", who, user.paid, dollar)
+            logging.info(
+                "user %d credited with %d tokens, payment:$%.2f", who, user.paid, dollar
+            )
             session.add(
                 Payment(
                     method=method,
@@ -356,6 +377,7 @@ def credit_account(who, total_amount: int, quota: int, transaction, method="stri
 
 # ============== Admin Functions ==============
 
+
 def get_all_users(page: int = 0, per_page: int = 10):
     """Get paginated list of all users"""
     with session_manager() as session:
@@ -363,13 +385,13 @@ def get_all_users(page: int = 0, per_page: int = 10):
         users = session.query(User).offset(page * per_page).limit(per_page).all()
         return [
             {
-                'user_id': u.user_id,
-                'first_name': u.first_name,
-                'username': u.username,
-                'free': u.free,
-                'paid': u.paid,
-                'bandwidth_used': u.bandwidth_used,
-                'is_blocked': u.is_blocked
+                "user_id": u.user_id,
+                "first_name": u.first_name,
+                "username": u.username,
+                "free": u.free,
+                "paid": u.paid,
+                "bandwidth_used": u.bandwidth_used,
+                "is_blocked": u.is_blocked,
             }
             for u in users
         ], total
@@ -379,13 +401,19 @@ def get_paid_users(page: int = 0, per_page: int = 10):
     """Get paginated list of users with paid credits"""
     with session_manager() as session:
         total = session.query(User).filter(User.paid > 0).count()
-        users = session.query(User).filter(User.paid > 0).offset(page * per_page).limit(per_page).all()
+        users = (
+            session.query(User)
+            .filter(User.paid > 0)
+            .offset(page * per_page)
+            .limit(per_page)
+            .all()
+        )
         return [
             {
-                'user_id': u.user_id,
-                'first_name': u.first_name,
-                'username': u.username,
-                'paid': u.paid
+                "user_id": u.user_id,
+                "first_name": u.first_name,
+                "username": u.username,
+                "paid": u.paid,
             }
             for u in users
         ], total
@@ -397,13 +425,13 @@ def get_user_stats(uid: int):
         user = session.query(User).filter(User.user_id == uid).first()
         if user:
             return {
-                'user_id': user.user_id,
-                'first_name': user.first_name,
-                'username': user.username,
-                'free': user.free,
-                'paid': user.paid,
-                'bandwidth_used': user.bandwidth_used,
-                'is_blocked': user.is_blocked
+                "user_id": user.user_id,
+                "first_name": user.first_name,
+                "username": user.username,
+                "free": user.free,
+                "paid": user.paid,
+                "bandwidth_used": user.bandwidth_used,
+                "is_blocked": user.is_blocked,
             }
         return None
 
@@ -412,20 +440,21 @@ def get_download_stats():
     """Get overall download statistics"""
     with session_manager() as session:
         from sqlalchemy import func
+
         total_users = session.query(User).count()
         paid_users = session.query(User).filter(User.paid > 0).count()
         total_free = session.query(func.sum(User.free)).scalar() or 0
         total_paid = session.query(func.sum(User.paid)).scalar() or 0
         total_bandwidth = session.query(func.sum(User.bandwidth_used)).scalar() or 0
         all_time_bandwidth = session.query(func.sum(User.total_bandwidth)).scalar() or 0
-        
+
         return {
-            'total_users': total_users,
-            'paid_users': paid_users,
-            'total_free_remaining': total_free,
-            'total_paid': total_paid,
-            'total_bandwidth_used': total_bandwidth,
-            'all_time_bandwidth': all_time_bandwidth
+            "total_users": total_users,
+            "paid_users": paid_users,
+            "total_free_remaining": total_free,
+            "total_paid": total_paid,
+            "total_bandwidth_used": total_bandwidth,
+            "all_time_bandwidth": all_time_bandwidth,
         }
 
 
@@ -460,7 +489,3 @@ def delete_user(uid: int):
         user = session.query(User).filter(User.user_id == uid).first()
         if user:
             session.delete(user)
-
-
-
-

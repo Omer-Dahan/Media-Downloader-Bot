@@ -4,6 +4,7 @@ JDownloader Manager - my.jdownloader.org API interaction layer.
 Handles all communication with JDownloader2 including adding links,
 tracking progress, managing concurrency limits, and cleanup.
 """
+
 import logging
 import threading
 import time
@@ -12,6 +13,7 @@ from typing import Any
 
 try:
     import myjdapi
+
     MYJD_AVAILABLE = True
 except ImportError:
     myjdapi = None  # type: ignore
@@ -24,26 +26,24 @@ from config import (
     JDOWNLOADER_DOWNLOAD_DIR,
     JDOWNLOADER_MAX_GLOBAL,
 )
+from utils import setup_secure_dir
 
 # Module-level concurrency tracking
-_active_downloads: dict[int, int] = {}  # user_id -> package_id
+_active_downloads: dict[int, set[int]] = {}  # user_id -> set of package_ids
 _global_active_count: int = 0
 _lock = threading.Lock()
 
 
 class JDownloaderError(Exception):
     """Base exception for JDownloader operations."""
-    pass
 
 
 class JDownloaderConnectionError(JDownloaderError):
     """JDownloader connection failed."""
-    pass
 
 
 class JDownloaderConcurrencyError(JDownloaderError):
     """Concurrency limit exceeded."""
-    pass
 
 
 class JDownloaderManager:
@@ -51,6 +51,7 @@ class JDownloaderManager:
 
     def __init__(self):
         """Initialize connection to my.jdownloader.org."""
+        setup_secure_dir(JDOWNLOADER_DOWNLOAD_DIR)
         if not MYJD_AVAILABLE:
             raise JDownloaderConnectionError(
                 "ספריית myjdapi אינה מותקנת. התקן אותה עם: pip install myjdownloader"
@@ -70,13 +71,19 @@ class JDownloaderManager:
                     f"לא נמצא מכשיר JDownloader בשם '{JDOWNLOADER_DEVICE_NAME}'. "
                     "ודא ש-JDownloader2 רץ ומחובר לחשבון my.jdownloader.org"
                 )
-            logging.info("Connected to JDownloader2 device: %s", JDOWNLOADER_DEVICE_NAME)
+            logging.info(
+                "Connected to JDownloader2 device: %s", JDOWNLOADER_DEVICE_NAME
+            )
         except JDownloaderConnectionError:
             raise
         except Exception as e:
             # Resolve exception types dynamically to avoid NameError when myjdapi unavailable
-            conn_exc = getattr(getattr(myjdapi, "exception", None), "MYJDConnectionException", None)
-            dev_exc = getattr(getattr(myjdapi, "exception", None), "MYJDDeviceNotFoundException", None)
+            conn_exc = getattr(
+                getattr(myjdapi, "exception", None), "MYJDConnectionException", None
+            )
+            dev_exc = getattr(
+                getattr(myjdapi, "exception", None), "MYJDDeviceNotFoundException", None
+            )
             if conn_exc and isinstance(e, conn_exc):
                 logging.error("Failed to connect to my.jdownloader.org: %s", e)
                 raise JDownloaderConnectionError(
@@ -113,11 +120,14 @@ class JDownloaderManager:
         global _global_active_count
 
         with _lock:
-            if user_id in _active_downloads:
-                return False, "יש לך כבר הורדת JDownloader פעילה. המתן לסיומה."
-
             if _global_active_count >= JDOWNLOADER_MAX_GLOBAL:
                 return False, "השרת עמוס כרגע. נסה שוב בעוד מספר דקות."
+
+            if user_id in _active_downloads and len(_active_downloads[user_id]) >= 3:
+                return (
+                    False,
+                    "הגעת למגבלת ההורדות המקבילות ב-JDownloader (3 לפחות). המתן לסיומן.",
+                )
 
             return True, ""
 
@@ -127,35 +137,85 @@ class JDownloaderManager:
         global _global_active_count
 
         with _lock:
-            _active_downloads[user_id] = package_id
+            if user_id not in _active_downloads:
+                _active_downloads[user_id] = set()
+            _active_downloads[user_id].add(package_id)
             _global_active_count += 1
-            logging.info("Registered JD download %s for user %s. Global count: %d",
-                        package_id, user_id, _global_active_count)
+            logging.info(
+                "Registered JD download %s for user %s. Global count: %d",
+                package_id,
+                user_id,
+                _global_active_count,
+            )
 
     @staticmethod
-    def _unregister_download(user_id: int):
+    def _unregister_download(user_id: int, package_id: int = None):
         """Unregister download from tracking."""
         global _global_active_count
 
         with _lock:
             if user_id in _active_downloads:
-                package_id = _active_downloads.pop(user_id)
-                _global_active_count = max(0, _global_active_count - 1)
-                logging.info("Unregistered JD download %s for user %s. Global count: %d",
-                            package_id, user_id, _global_active_count)
+                if package_id is not None:
+                    if package_id in _active_downloads[user_id]:
+                        _active_downloads[user_id].remove(package_id)
+                        _global_active_count = max(0, _global_active_count - 1)
+                        logging.info(
+                            "Unregistered JD download %s for user %s. Global count: %d",
+                            package_id,
+                            user_id,
+                            _global_active_count,
+                        )
+                else:
+                    # Fallback if no package_id provided - pop an arbitrary one
+                    if _active_downloads[user_id]:
+                        popped_id = _active_downloads[user_id].pop()
+                        _global_active_count = max(0, _global_active_count - 1)
+                        logging.info(
+                            "Unregistered random JD download %s for user %s. Global count: %d",
+                            popped_id,
+                            user_id,
+                            _global_active_count,
+                        )
+
+                # Cleanup empty sets
+                if not _active_downloads[user_id]:
+                    del _active_downloads[user_id]
 
     # Video file extensions to accept from JDownloader packages
     VIDEO_EXTENSIONS = (
-        ".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv",
-        ".wmv", ".m4v", ".ts", ".m2ts", ".mpeg", ".mpg",
-        ".f4v", ".3gp", ".ogv", ".m3u8",
+        ".mp4",
+        ".mkv",
+        ".avi",
+        ".mov",
+        ".webm",
+        ".flv",
+        ".wmv",
+        ".m4v",
+        ".ts",
+        ".m2ts",
+        ".mpeg",
+        ".mpg",
+        ".f4v",
+        ".3gp",
+        ".ogv",
+        ".m3u8",
     )
 
     # Known non-media extensions to always reject
     JUNK_EXTENSIONS = (
-        ".webmanifest", ".html", ".htm", ".css", ".js",
-        ".woff", ".woff2", ".ttf", ".eot", ".map", 
-        ".php", ".asp", ".jsp",
+        ".webmanifest",
+        ".html",
+        ".htm",
+        ".css",
+        ".js",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".map",
+        ".php",
+        ".asp",
+        ".jsp",
     )
 
     def add_link(self, url: str, user_id: int) -> int:
@@ -178,12 +238,16 @@ class JDownloaderManager:
             # Snapshot existing linkgrabber package UUIDs BEFORE adding our link
             existing_uuids = self._get_linkgrabber_uuids()
 
-            self._device.linkgrabber.add_links([{
-                "autostart": False,   # keep in linkgrabber until we filter
-                "links": url,
-                "packageName": f"TGBot_{user_id}",
-                "destinationFolder": JDOWNLOADER_DOWNLOAD_DIR,
-            }])
+            self._device.linkgrabber.add_links(
+                [
+                    {
+                        "autostart": False,  # keep in linkgrabber until we filter
+                        "links": url,
+                        "packageName": f"TGBot_{user_id}",
+                        "destinationFolder": JDOWNLOADER_DOWNLOAD_DIR,
+                    }
+                ]
+            )
 
             # Retry loop: wait up to 60s for JDownloader to crawl the URL
             # and create a NEW package that wasn't there before
@@ -212,7 +276,9 @@ class JDownloaderManager:
 
             logging.info(
                 "Added link to JDownloader for user %s: %s (package: %s)",
-                user_id, url, package_id,
+                user_id,
+                url,
+                package_id,
             )
             return package_id
 
@@ -239,7 +305,11 @@ class JDownloaderManager:
                 for pkg in packages:
                     uid = pkg.get("uuid")
                     if uid and uid not in existing_uuids:
-                        logging.info("Found new JD package: uuid=%s name='%s'", uid, pkg.get("name"))
+                        logging.info(
+                            "Found new JD package: uuid=%s name='%s'",
+                            uid,
+                            pkg.get("name"),
+                        )
                         return uid
         except Exception as e:
             logging.error("Error searching for new package: %s", e)
@@ -251,11 +321,15 @@ class JDownloaderManager:
         This ensures JDownloader only downloads video files.
         """
         try:
-            links = self._device.linkgrabber.query_links([{
-                "packageUUIDs": [package_id],
-                "name": True,
-                "url": True,
-            }])
+            links = self._device.linkgrabber.query_links(
+                [
+                    {
+                        "packageUUIDs": [package_id],
+                        "name": True,
+                        "url": True,
+                    }
+                ]
+            )
             if not links:
                 return  # nothing to filter
 
@@ -279,7 +353,8 @@ class JDownloaderManager:
                 if junk_to_remove:
                     logging.info(
                         "No video links found — removing %d junk links from JD package %s",
-                        len(junk_to_remove), package_id,
+                        len(junk_to_remove),
+                        package_id,
                     )
                     self._device.linkgrabber.remove_links(
                         link_ids=junk_to_remove,
@@ -293,17 +368,25 @@ class JDownloaderManager:
                         "JDownloader מצא תוכן אך ללא פורמט נתמך."
                     )
 
-                names = [lnk.get("name", "?") for lnk in links if lnk.get("uuid") not in junk_to_remove]
+                names = [
+                    lnk.get("name", "?")
+                    for lnk in links
+                    if lnk.get("uuid") not in junk_to_remove
+                ]
                 logging.warning(
                     "No video-extension links found in JD package %s — kept %d non-junk links. "
-                    "Link names: %s", package_id, surviving, names
+                    "Link names: %s",
+                    package_id,
+                    surviving,
+                    names,
                 )
                 return
 
             if links_to_remove:
                 logging.info(
                     "Removing %d non-video links from JD package %s",
-                    len(links_to_remove), package_id,
+                    len(links_to_remove),
+                    package_id,
                 )
                 self._device.linkgrabber.remove_links(
                     link_ids=links_to_remove,
@@ -317,30 +400,30 @@ class JDownloaderManager:
                     "JDownloader מצא תוכן אך ללא פורמט נתמך."
                 )
 
-            logging.info("%d video link(s) kept in JD package %s", remaining, package_id)
+            logging.info(
+                "%d video link(s) kept in JD package %s", remaining, package_id
+            )
 
         except JDownloaderError:
             raise
         except Exception as e:
-            logging.warning("Could not filter video links in package %s: %s", package_id, e)
+            logging.warning(
+                "Could not filter video links in package %s: %s", package_id, e
+            )
             # Non-fatal: proceed without filtering
 
     @classmethod
     def _is_video_link(cls, link: dict) -> bool:
         """Return True if a linkgrabber link looks like a video file."""
         name = (link.get("name") or "").lower()
-        url  = (link.get("url")  or "").lower()
-        return any(
-            name.endswith(ext) or ext in url
-            for ext in cls.VIDEO_EXTENSIONS
-        )
+        url = (link.get("url") or "").lower()
+        return any(name.endswith(ext) or ext in url for ext in cls.VIDEO_EXTENSIONS)
 
     @classmethod
     def _is_junk_link(cls, link: dict) -> bool:
         """Return True if a linkgrabber link is a known junk/non-media file."""
         name = (link.get("name") or "").lower()
         return any(name.endswith(ext) for ext in cls.JUNK_EXTENSIONS)
-
 
     def get_status(self, package_id: int) -> dict[str, Any]:
         """
@@ -353,29 +436,39 @@ class JDownloaderManager:
         try:
             # Try getting packages, reconnect if connection lost
             try:
-                packages = self._device.downloads.query_packages([{
-                    "bytesLoaded": True,
-                    "bytesTotal": True,
-                    "speed": True,
-                    "eta": True,
-                    "status": True,
-                    "finished": True,
-                    "running": True,
-                    "saveTo": True,
-                }])
+                packages = self._device.downloads.query_packages(
+                    [
+                        {
+                            "bytesLoaded": True,
+                            "bytesTotal": True,
+                            "speed": True,
+                            "eta": True,
+                            "status": True,
+                            "finished": True,
+                            "running": True,
+                            "saveTo": True,
+                        }
+                    ]
+                )
             except (ConnectionError, myjdapi.exception.MYJDConnectionException) as e:
-                logging.warning("JDownloader connection lost in get_status, reconnecting... (%s)", e)
+                logging.warning(
+                    "JDownloader connection lost in get_status, reconnecting... (%s)", e
+                )
                 self._reconnect()
-                packages = self._device.downloads.query_packages([{
-                    "bytesLoaded": True,
-                    "bytesTotal": True,
-                    "speed": True,
-                    "eta": True,
-                    "status": True,
-                    "finished": True,
-                    "running": True,
-                    "saveTo": True,
-                }])
+                packages = self._device.downloads.query_packages(
+                    [
+                        {
+                            "bytesLoaded": True,
+                            "bytesTotal": True,
+                            "speed": True,
+                            "eta": True,
+                            "status": True,
+                            "finished": True,
+                            "running": True,
+                            "saveTo": True,
+                        }
+                    ]
+                )
 
             if not packages:
                 return {"state": "missing", "error": "חבילת ההורדה לא נמצאה"}
@@ -433,8 +526,6 @@ class JDownloaderManager:
         status = self.get_status(package_id)
         return status.get("state") == "finished" or status.get("progress", 0) >= 100
 
-
-
     def get_output_path(self, package_id: int) -> Path | None:
         """
         Get the path to downloaded content.
@@ -443,9 +534,13 @@ class JDownloaderManager:
             Path to download directory or specific file
         """
         try:
-            packages = self._device.downloads.query_packages([{
-                "saveTo": True,
-            }])
+            packages = self._device.downloads.query_packages(
+                [
+                    {
+                        "saveTo": True,
+                    }
+                ]
+            )
 
             if not packages:
                 return None
@@ -464,7 +559,9 @@ class JDownloaderManager:
             dl_dir = Path(JDOWNLOADER_DOWNLOAD_DIR)
             if dl_dir.exists():
                 # Find the most recently modified item
-                items = sorted(dl_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True)
+                items = sorted(
+                    dl_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True
+                )
                 if items:
                     return items[0]
 
@@ -474,7 +571,9 @@ class JDownloaderManager:
             logging.error("Failed to get JDownloader output path: %s", e)
             return None
 
-    def remove_download(self, package_id: int, user_id: int, delete_files: bool = False):
+    def remove_download(
+        self, package_id: int, user_id: int, delete_files: bool = False
+    ):
         """
         Remove download from JDownloader and cleanup tracking.
 
@@ -490,14 +589,14 @@ class JDownloaderManager:
                     action="DELETE_ALL",
                     mode="REMOVE_LINKS_AND_DELETE_FILES",
                     selection_type="NONE",
-                    package_ids=[package_id]
+                    package_ids=[package_id],
                 )
             else:
                 self._device.downloads.remove_links(package_ids=[package_id])
-            logging.info("Removed JD package %s (delete_files=%s)", package_id, delete_files)
+            logging.info(
+                "Removed JD package %s (delete_files=%s)", package_id, delete_files
+            )
         except Exception as e:
             logging.error("Failed to remove JD package %s: %s", package_id, e)
         finally:
-            self._unregister_download(user_id)
-
-
+            self._unregister_download(user_id, package_id)

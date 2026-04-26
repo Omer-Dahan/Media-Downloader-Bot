@@ -1,9 +1,7 @@
 import logging
 import os
 import re
-import pathlib
 import subprocess
-import tempfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -28,12 +26,14 @@ class DirectDownload(BaseDownloader):
 
     def _requests_download(self):
         """Download using curl_cffi (Chrome impersonation) with streaming support for large files."""
-        logging.info("[DOWNLOAD METHOD: curl_cffi/requests] Starting download: %s", self._url)
-        
+        logging.info(
+            "[DOWNLOAD METHOD: curl_cffi/requests] Starting download: %s", self._url
+        )
+
         # Extract origin for Referer header
         parsed = urlparse(self._url)
         origin = f"{parsed.scheme}://{parsed.netloc}"
-        
+
         # Full browser-like headers
         headers = {
             "User-Agent": DEFAULT_USER_AGENT,
@@ -47,51 +47,56 @@ class DirectDownload(BaseDownloader):
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
         }
-        
+
         # Try curl_cffi first (impersonates Chrome TLS fingerprint)
         try:
             from curl_cffi import requests as curl_requests
+
             logging.info("Using curl_cffi with Chrome impersonation")
-            
+
             # Use streaming download for large files with increased timeout (15 minutes)
             response = curl_requests.get(
-                self._url, 
-                headers=headers, 
+                self._url,
+                headers=headers,
                 impersonate="chrome",
                 timeout=900,  # 15 minutes timeout for large files
-                stream=True
+                stream=True,
             )
-            
+
             if response.status_code >= 400:
-                raise ValueError(f"ההורדה נכשלה: {response.status_code} - {response.reason}")
-            
+                raise ValueError(
+                    f"ההורדה נכשלה: {response.status_code} - {response.reason}"
+                )
+
             # Get file size from headers if available
-            total_size = int(response.headers.get('content-length', 0))
-            
+            total_size = int(response.headers.get("content-length", 0))
+
             # Create temporary file
             file = Path(self._tempdir.name).joinpath(uuid4().hex)
-            
+
             # Download with progress tracking
             downloaded = 0
             chunk_size = 1024 * 1024  # 1MB chunks
-            
+
             try:
                 with open(file, "wb") as f:
                     for chunk in response.iter_content(chunk_size=chunk_size):
                         if chunk:
                             f.write(chunk)
                             downloaded += len(chunk)
-                            
+
                             # Check for cancellation on every chunk
                             self.check_for_cancel()
-                            
+
                             # Update progress if we know total size
                             if total_size > 0:
-                                self.download_hook({
-                                    "status": "downloading",
-                                    "downloaded_bytes": downloaded,
-                                    "total_bytes": total_size
-                                })
+                                self.download_hook(
+                                    {
+                                        "status": "downloading",
+                                        "downloaded_bytes": downloaded,
+                                        "total_bytes": total_size,
+                                    }
+                                )
             except ValueError:
                 # Cancellation - close the connection immediately
                 logging.info("Closing connection due to cancellation")
@@ -103,44 +108,50 @@ class DirectDownload(BaseDownloader):
                     response.close()
                 except Exception:
                     pass
-            
+
             file_size_mb = downloaded / (1024 * 1024)
             logging.info("Download complete via curl_cffi: %d bytes", downloaded)
-            self._bot_msg.edit_text(f"✅ ההורדה הושלמה ({file_size_mb:.1f} MB)\n⏳ מעלה לטלגרם...")
-            
+            self._bot_msg.edit_text(
+                f"✅ ההורדה הושלמה ({file_size_mb:.1f} MB)\n⏳ מעלה לטלגרם..."
+            )
+
         except ImportError:
             logging.warning("curl_cffi not available, falling back to requests")
             # Fallback to regular requests with streaming
             try:
-                response = requests.get(self._url, stream=True, headers=headers, timeout=(10, 900))
+                response = requests.get(
+                    self._url, stream=True, headers=headers, timeout=(10, 900)
+                )
                 response.raise_for_status()
-                
+
                 # Get file size from headers
-                total_size = int(response.headers.get('content-length', 0))
-                
+                total_size = int(response.headers.get("content-length", 0))
+
                 # Create temporary file
                 file = Path(self._tempdir.name).joinpath(uuid4().hex)
-                
+
                 # Download with progress
                 downloaded = 0
                 chunk_size = 1024 * 1024  # 1MB chunks
-                
+
                 try:
                     with open(file, "wb") as f:
                         for chunk in response.iter_content(chunk_size=chunk_size):
                             if chunk:
                                 f.write(chunk)
                                 downloaded += len(chunk)
-                                
+
                                 # Check for cancellation on every chunk
                                 self.check_for_cancel()
-                                
+
                                 if total_size > 0:
-                                    self.download_hook({
-                                        "status": "downloading",
-                                        "downloaded_bytes": downloaded,
-                                        "total_bytes": total_size
-                                    })
+                                    self.download_hook(
+                                        {
+                                            "status": "downloading",
+                                            "downloaded_bytes": downloaded,
+                                            "total_bytes": total_size,
+                                        }
+                                    )
                 except ValueError:
                     # Cancellation - close the connection immediately
                     logging.info("Closing requests connection due to cancellation")
@@ -151,26 +162,28 @@ class DirectDownload(BaseDownloader):
                         response.close()
                     except Exception:
                         pass
-                
+
                 logging.info("Download complete via requests: %d bytes", downloaded)
             except HTTPError as e:
-                raise ValueError(f"ההורדה נכשלה: {e.response.status_code} - {e.response.reason}") from e
+                raise ValueError(
+                    f"ההורדה נכשלה: {e.response.status_code} - {e.response.reason}"
+                ) from e
             except requests.exceptions.RequestException as e:
                 # Check if this is a network error
                 if is_network_error(e):
                     # Get partial file size
                     partial_bytes = 0
-                    if 'file' in dir() and file.exists():
+                    if "file" in dir() and file.exists():
                         partial_bytes = file.stat().st_size
                     raise NetworkError(
                         url=self._url,
                         downloaded_bytes=partial_bytes,
-                        total_bytes=total_size if 'total_size' in dir() else 0,
-                        partial_file_path=str(file) if 'file' in dir() else None,
-                        original_error=e
+                        total_bytes=total_size if "total_size" in dir() else 0,
+                        partial_file_path=str(file) if "file" in dir() else None,
+                        original_error=e,
                     ) from e
                 raise ValueError(f"שגיאת חיבור: {e}") from e
-        
+
         # Detect file type and rename with proper extension
         ext = filetype.guess_extension(file)
         if ext is not None:
@@ -181,7 +194,9 @@ class DirectDownload(BaseDownloader):
         return [file.as_posix()]
 
     def _aria2_download(self):
-        logging.info("[DOWNLOAD METHOD: aria2] Starting multi-connection download: %s", self._url)
+        logging.info(
+            "[DOWNLOAD METHOD: aria2] Starting multi-connection download: %s", self._url
+        )
         ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
         # filename = self._get_aria2_name()
         self._process = None
@@ -200,7 +215,8 @@ class DirectDownload(BaseDownloader):
                 "--quiet=false",
                 "--human-readable=true",
                 f"--user-agent={ua}",
-                "-d", temp_dir,
+                "-d",
+                temp_dir,
                 self._url,
             ]
 
@@ -209,7 +225,7 @@ class DirectDownload(BaseDownloader):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
-                bufsize=1
+                bufsize=1,
             )
 
             while True:
@@ -229,19 +245,25 @@ class DirectDownload(BaseDownloader):
             success = self._process.wait() == 0
             if not success:
                 raise subprocess.CalledProcessError(
-                    self._process.returncode, 
-                    command, 
-                    self._process.stderr.read()
+                    self._process.returncode, command, self._process.stderr.read()
                 )
             if self._process.returncode != 0:
                 raise subprocess.CalledProcessError(
-                    self._process.returncode, 
-                    command, 
-                    stderr
+                    self._process.returncode, command, stderr
                 )
 
             # This will get [Path_object] if a file is found, or None if no files are found.
-            files = [f] if (f := next((item for item in Path(temp_dir).glob("*") if item.is_file()), None)) is not None else None
+            files = (
+                [f]
+                if (
+                    f := next(
+                        (item for item in Path(temp_dir).glob("*") if item.is_file()),
+                        None,
+                    )
+                )
+                is not None
+                else None
+            )
             if files is None:
                 logging.error(f"No files found in {temp_dir}")
                 raise FileNotFoundError(f"No files found in {temp_dir}")
@@ -268,8 +290,8 @@ class DirectDownload(BaseDownloader):
             return {"status": "complete"}
 
         progress_match = re.search(
-            r'\[#\w+\s+(?P<progress>[\d.]+[KMGTP]?iB)/(?P<total>[\d.]+[KMGTP]?iB)\(.*?\)\s+CN:\d+\s+DL:(?P<speed>[\d.]+[KMGTP]?iB)\s+ETA:(?P<eta>[\dhms]+)',
-            line
+            r"\[#\w+\s+(?P<progress>[\d.]+[KMGTP]?iB)/(?P<total>[\d.]+[KMGTP]?iB)\(.*?\)\s+CN:\d+\s+DL:(?P<speed>[\d.]+[KMGTP]?iB)\s+ETA:(?P<eta>[\dhms]+)",
+            line,
         )
 
         if progress_match:
@@ -278,7 +300,7 @@ class DirectDownload(BaseDownloader):
                 "downloaded_bytes": self.__parse_size(progress_match.group("progress")),
                 "total_bytes": self.__parse_size(progress_match.group("total")),
                 "_speed_str": f"{progress_match.group('speed')}/s",
-                "_eta_str": progress_match.group("eta")
+                "_eta_str": progress_match.group("eta"),
             }
 
         # Fallback check for summary lines
@@ -289,11 +311,19 @@ class DirectDownload(BaseDownloader):
 
     def __parse_size(self, size_str: str) -> int:
         units = {
-            "B": 1, 
-            "K": 1024, "KB": 1024, "KIB": 1024,
-            "M": 1024**2, "MB": 1024**2, "MIB": 1024**2,
-            "G": 1024**3, "GB": 1024**3, "GIB": 1024**3,
-            "T": 1024**4, "TB": 1024**4, "TIB": 1024**4
+            "B": 1,
+            "K": 1024,
+            "KB": 1024,
+            "KIB": 1024,
+            "M": 1024**2,
+            "MB": 1024**2,
+            "MIB": 1024**2,
+            "G": 1024**3,
+            "GB": 1024**3,
+            "GIB": 1024**3,
+            "T": 1024**4,
+            "TB": 1024**4,
+            "TIB": 1024**4,
         }
         match = re.match(r"([\d.]+)([A-Za-z]*)", size_str.replace("i", "").upper())
         if match:
@@ -319,5 +349,5 @@ class DirectDownload(BaseDownloader):
                 downloaded_bytes=e.downloaded_bytes,
                 total_bytes=e.total_bytes,
                 partial_file=e.partial_file_path,
-                download_type="direct"
+                download_type="direct",
             )

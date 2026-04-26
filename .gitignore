@@ -33,3 +33,8 @@ temp/
 
 # Status files
 *.pid
+
+# Documentation (as per user rules)
+*.md
+!README.md
+.claude/

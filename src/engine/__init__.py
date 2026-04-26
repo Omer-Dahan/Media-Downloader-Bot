@@ -15,6 +15,7 @@ from engine.tiktok import TikTokDownload
 # Optional: Torrent support (requires qbittorrentapi)
 try:
     from engine.torrent import TorrentDownload
+
     TORRENT_AVAILABLE = True
 except (ImportError, Exception):
     TorrentDownload = None  # type: ignore
@@ -23,6 +24,7 @@ except (ImportError, Exception):
 # Optional: JDownloader support (requires myjdapi)
 try:
     from engine.jdownloader import JDownloaderDownload
+
     JDOWNLOADER_AVAILABLE = True
 except (ImportError, Exception):
     JDownloaderDownload = None  # type: ignore
@@ -49,15 +51,17 @@ def youtube_entrance(client, bot_message, url):
         if "בוטלה" in str(e):
             logging.info("YouTube download cancelled by user, skipping fallback")
             return
-            
-        logging.info("youtube_entrance failed for %s, falling back to JDownloader: %s", url, e)
+
+        logging.info(
+            "youtube_entrance failed for %s, falling back to JDownloader: %s", url, e
+        )
         # Avoid double notification by using the already existing bot_message
         jdownloader_entrance(client, bot_message, url)
 
 
 def youtube_entrance_with_quality(client, bot_message, url, quality: str):
     """Start YouTube download with specific quality selection.
-    
+
     Args:
         quality: One of '1080', '720', '480', '360', 'audio'
     """
@@ -69,17 +73,23 @@ def youtube_entrance_with_quality(client, bot_message, url, quality: str):
     except Exception as e:
         # Check if this is a manual cancellation - don't fallback to JDownloader
         if "בוטלה" in str(e):
-            logging.info("YouTube download (quality) cancelled by user, skipping fallback")
+            logging.info(
+                "YouTube download (quality) cancelled by user, skipping fallback"
+            )
             return
-            
-        logging.info("youtube_entrance_with_quality failed for %s, falling back to JDownloader: %s", url, e)
+
+        logging.info(
+            "youtube_entrance_with_quality failed for %s, falling back to JDownloader: %s",
+            url,
+            e,
+        )
         # Avoid double notification by using the already existing bot_message
         jdownloader_entrance(client, bot_message, url)
 
 
 def get_youtube_video_info(url: str) -> dict | None:
     """Extract video info without downloading.
-    
+
     Returns dict with 'title' and 'duration' or None on error.
     """
     return YoutubeDownload.extract_info(url)
@@ -112,7 +122,9 @@ def tiktok_handler(client: Any, bot_message: Any, url: str) -> None:
 
 
 # --- Handler for Torrents ---
-def torrent_entrance(client: Any, bot_message: Any, source: str, torrent_file_path: str = None) -> None:
+def torrent_entrance(
+    client: Any, bot_message: Any, source: str, torrent_file_path: str = None
+) -> None:
     """Start torrent download from magnet link or .torrent file."""
     if not TORRENT_AVAILABLE:
         bot_message.edit_text(
@@ -121,6 +133,7 @@ def torrent_entrance(client: Any, bot_message: Any, source: str, torrent_file_pa
         )
         return
     from pathlib import Path
+
     file_path = Path(torrent_file_path) if torrent_file_path else None
     downloader = TorrentDownload(client, bot_message, source, file_path)
     downloader.start()
@@ -129,8 +142,9 @@ def torrent_entrance(client: Any, bot_message: Any, source: str, torrent_file_pa
 def is_magnet_link(text: str) -> bool:
     """Check if text is a magnet link."""
     import re
+
     # Match magnet links with v1 (40 hex) or v2 (64 hex) hashes
-    pattern = r'^magnet:\?xt=urn:btih:[a-fA-F0-9]{40,64}'
+    pattern = r"^magnet:\?xt=urn:btih:[a-fA-F0-9]{40,64}"
     return bool(re.match(pattern, text.strip()))
 
 
@@ -166,9 +180,26 @@ DOWNLOADER_MAP: dict[str, Callable[[Any, Any, str], Any]] = {
 
 # Media extensions to detect direct download links
 MEDIA_EXTENSIONS = (
-    ".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v",  # video
-    ".mp3", ".m4a", ".flac", ".wav", ".aac", ".ogg", ".wma",  # audio
-    ".zip", ".rar", ".7z", ".tar", ".gz",  # archives
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".mov",
+    ".webm",
+    ".flv",
+    ".wmv",
+    ".m4v",  # video
+    ".mp3",
+    ".m4a",
+    ".flac",
+    ".wav",
+    ".aac",
+    ".ogg",
+    ".wma",  # audio
+    ".zip",
+    ".rar",
+    ".7z",
+    ".tar",
+    ".gz",  # archives
 )
 
 
@@ -198,27 +229,39 @@ def special_download_entrance(client: Any, bot_message: Any, url: str) -> Any:
             except Exception as e:
                 # Check if this is a manual cancellation - don't fallback to JDownloader
                 if "בוטלה" in str(e):
-                    logging.info("Specialized download cancelled by user, skipping fallback")
+                    logging.info(
+                        "Specialized download cancelled by user, skipping fallback"
+                    )
                     return
-                
+
                 # If specialized downloader fails, fallback to JDownloader (unless it WAS JDownloader)
                 if handler_function != jdownloader_entrance:
-                    logging.info("Specialized downloader %s failed for %s, falling back to JDownloader: %s", 
-                                 handler_function.__name__, url, e)
+                    logging.info(
+                        "Specialized downloader %s failed for %s, falling back to JDownloader: %s",
+                        handler_function.__name__,
+                        url,
+                        e,
+                    )
                     return jdownloader_entrance(client, bot_message, url)
                 raise
 
     # Check if URL contains media extension - try yt-dlp first
     if is_direct_download_url(url):
         try:
-             return youtube_entrance(client, bot_message, url)
+            return youtube_entrance(client, bot_message, url)
         except Exception as e:
-             # Check if this is a manual cancellation - don't fallback to JDownloader
-             if "בוטלה" in str(e):
-                 logging.info("Direct link (yt-dlp) cancelled by user, skipping fallback")
-                 return
-             
-             logging.info("yt-dlp failed for direct link %s, falling back to JDownloader: %s", url, e)
-             return jdownloader_entrance(client, bot_message, url)
+            # Check if this is a manual cancellation - don't fallback to JDownloader
+            if "בוטלה" in str(e):
+                logging.info(
+                    "Direct link (yt-dlp) cancelled by user, skipping fallback"
+                )
+                return
+
+            logging.info(
+                "yt-dlp failed for direct link %s, falling back to JDownloader: %s",
+                url,
+                e,
+            )
+            return jdownloader_entrance(client, bot_message, url)
 
     raise ValueError(f"לא נמצא מוריד מתאים עבור: {hostname}")

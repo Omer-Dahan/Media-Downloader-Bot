@@ -1,14 +1,30 @@
+import os
+import platform
 import re
+import subprocess
+import time
 from urllib.parse import urlparse
 
+import psutil
 
 from engine.helper import sizeof_fmt
 
-import time
-import psutil
+
+def setup_secure_dir(path: str) -> None:
+    """יוצר תיקייה עם הרשאת הרצה מחוסמת למניעת הפעלת קבצים זדוניים."""
+    os.makedirs(path, exist_ok=True)
+    if platform.system() == "Windows":
+        subprocess.run(
+            ["icacls", path, "/deny", "Everyone:(X)"], capture_output=True, check=False
+        )
+    else:
+        current = os.stat(path).st_mode
+        os.chmod(path, current & ~0o111)  # הסר Execute מכולם
+
 
 def get_system_stats() -> dict:
     """Get system resource usage statistics."""
+
     def safe(func, *args):
         try:
             return func(*args)
@@ -47,7 +63,7 @@ def format_system_stats(bot_start_time=None) -> tuple[str, str]:
     Returns: (owner_stats_str, user_stats_str)
     """
     stats = get_system_stats()
-    
+
     # Disk
     if stats["disk"]:
         total, used, free, disk_percent = stats["disk"]
@@ -83,7 +99,9 @@ def format_system_stats(bot_start_time=None) -> tuple[str, str]:
 
     # Uptime
     bot_uptime = timeof_fmt(time.time() - bot_start_time) if bot_start_time else "N/A"
-    os_uptime = timeof_fmt(time.time() - stats["boot_time"]) if stats["boot_time"] else "N/A"
+    os_uptime = (
+        timeof_fmt(time.time() - stats["boot_time"]) if stats["boot_time"] else "N/A"
+    )
 
     # Base top info
     base_info = (
@@ -98,9 +116,9 @@ def format_system_stats(bot_start_time=None) -> tuple[str, str]:
     )
 
     owner_stats = (
-        "\n\n⌬─────「 סטטיסטיקות 」─────⌬\n\n" +
-        base_info +
-        f"<b>סה״כ SWAP:</b> {swap_total} | <b>שימוש ב-SWAP:</b> {swap_percent}\n\n"
+        "\n\n⌬─────「 סטטיסטיקות 」─────⌬\n\n"
+        + base_info
+        + f"<b>סה״כ SWAP:</b> {swap_total} | <b>שימוש ב-SWAP:</b> {swap_percent}\n\n"
         f"<b>סה״כ שטח דיסק:</b> {total_str}\n"
         f"<b>בשימוש:</b> {used_str} | <b>פנוי:</b> {free_str}\n\n"
         f"<b>ליבות פיזיות:</b> {stats['p_cores']}\n"
@@ -110,14 +128,15 @@ def format_system_stats(bot_start_time=None) -> tuple[str, str]:
     )
 
     user_stats = (
-        "\n\n⌬─────「 סטטיסטיקות 」─────⌬\n\n" +
-        base_info +
-        f"<b>סה״כ שטח דיסק:</b> {total_str}\n"
+        "\n\n⌬─────「 סטטיסטיקות 」─────⌬\n\n"
+        + base_info
+        + f"<b>סה״כ שטח דיסק:</b> {total_str}\n"
         f"<b>בשימוש:</b> {used_str} | <b>פנוי:</b> {free_str}\n\n"
         f"<b>🤖זמן פעילות הבוט:</b> {bot_uptime}\n"
     )
 
     return owner_stats, user_stats
+
 
 def timeof_fmt(seconds: int | float):
     periods = [("d", 86400), ("h", 3600), ("m", 60), ("s", 1)]
@@ -135,13 +154,15 @@ def is_youtube(url: str) -> bool:
             return False
 
         parsed = urlparse(url)
-        return parsed.netloc.lower() in {'youtube.com', 'www.youtube.com', 'youtu.be', 'music.youtube.com'}
+        return parsed.netloc.lower() in {
+            "youtube.com",
+            "www.youtube.com",
+            "youtu.be",
+            "music.youtube.com",
+        }
 
     except Exception:
         return False
-
-
-
 
 
 def extract_url_and_name(message_text):
@@ -159,4 +180,3 @@ def extract_url_and_name(message_text):
     new_name = name_match.group(1) if name_match else None
 
     return url, new_name
-

@@ -5,6 +5,7 @@ Extends BaseDownloader to provide JDownloader2 download with progress tracking,
 stall detection, timeouts, and proper cleanup.
 Uses my.jdownloader.org API for remote control.
 """
+
 import logging
 import shutil
 import time
@@ -25,12 +26,14 @@ from engine.jdownloader_manager import (
     JDownloaderConnectionError,
     JDownloaderConcurrencyError,
 )
-from engine.archive_manager import needs_archive, create_zip, create_split_archive, split_file
+from engine.archive_manager import (
+    needs_archive,
+    create_zip,
+    create_split_archive,
+    split_file,
+)
 from engine.helper import moon_progress_bar, sizeof_fmt
 from utils import timeof_fmt
-
-
-
 
 
 class JDownloaderDownload(BaseDownloader):
@@ -61,45 +64,50 @@ class JDownloaderDownload(BaseDownloader):
         """Fetch subtitles using yt-dlp in the background while JD downloads video."""
         if not self._subtitles:
             return
-            
-        logging.info("Attempting to fetch subtitles for JD download via yt-dlp: %s", self._url)
+
+        logging.info(
+            "Attempting to fetch subtitles for JD download via yt-dlp: %s", self._url
+        )
         try:
             # We download subtitles to self._tempdir.name
             # BaseDownloader._upload will pick them up from there if we include them.
-            
+
             # Construct yt-dlp command to only get subtitles
             cmd = [
-                sys.executable, "-m", "yt_dlp",
+                sys.executable,
+                "-m",
+                "yt_dlp",
                 "--skip-download",
                 "--writesubtitles",
                 "--writeautomaticsub",
-                "--subtitleslangs", "en,en-orig,en-US,en-GB,he",  # Added Hebrew as per bot context
-                "--subtitlesformat", "srt",
-                "--output", f"{self._tempdir.name}/%(title).70s.%(ext)s",
+                "--subtitleslangs",
+                "en,en-orig,en-US,en-GB,he",  # Added Hebrew as per bot context
+                "--subtitlesformat",
+                "srt",
+                "--output",
+                f"{self._tempdir.name}/%(title).70s.%(ext)s",
                 "--quiet",
                 "--no-warnings",
-                self._url
+                self._url,
             ]
-            
+
             def run_ytdlp():
                 try:
                     subprocess.run(cmd, check=False, timeout=60)
                     logging.info("yt-dlp subtitle fetch completed for %s", self._url)
                 except Exception as e:
                     logging.warning("Background subtitle fetch failed: %s", e)
-            
+
             threading.Thread(target=run_ytdlp, daemon=True).start()
-            
+
         except Exception as e:
             logging.warning("Failed to start background subtitle fetch: %s", e)
 
     def _setup_formats(self):
         """Not used for JDownloader downloads."""
-        pass
 
     def _download(self, formats=None):
         """Not used directly - JDownloader download is handled in _start."""
-        pass
 
     def _format_progress_message(self, status: dict) -> str:
         """Build progress message for Telegram."""
@@ -125,12 +133,16 @@ class JDownloaderDownload(BaseDownloader):
         bar = moon_progress_bar(progress)
 
         # Format sizes
-        size_progress = f"{sizeof_fmt(downloaded)}/{sizeof_fmt(total)}" if total > 0 else f"{sizeof_fmt(downloaded)}"
+        size_progress = (
+            f"{sizeof_fmt(downloaded)}/{sizeof_fmt(total)}"
+            if total > 0
+            else f"{sizeof_fmt(downloaded)}"
+        )
 
         speed_str = f"{sizeof_fmt(speed)}/s" if speed > 0 else ""
         if speed > 0:
             self._last_speed = speed
-        
+
         eta_str = timeof_fmt(eta) if eta > 0 else ""
 
         def more(title, value):
@@ -266,7 +278,11 @@ class JDownloaderDownload(BaseDownloader):
             raise JDownloaderError(msg) from e
 
         self._start_time = time.time()
-        logging.info("JDownloader download started - package: %s, user: %s", self._package_id, user_id)
+        logging.info(
+            "JDownloader download started - package: %s, user: %s",
+            self._package_id,
+            user_id,
+        )
 
         # Start background subtitle fetch if enabled
         self._download_subtitles_background()
@@ -293,11 +309,15 @@ class JDownloaderDownload(BaseDownloader):
                 time.sleep(JDOWNLOADER_POLL_INTERVAL)
 
             # 5. Download complete - get output
-            self.edit_text("🔧 **JDownloader2**\n\n✅ ההורדה הסתיימה!\n📦 מכין קבצים להעלאה...")
+            self.edit_text(
+                "🔧 **JDownloader2**\n\n✅ ההורדה הסתיימה!\n📦 מכין קבצים להעלאה..."
+            )
 
             output_path = self._manager.get_output_path(self._package_id)
             if not output_path or not output_path.exists():
-                raise JDownloaderError("לא נמצאו קבצים שהורדו. בדוק את תיקיית ההורדות של JDownloader.")
+                raise JDownloaderError(
+                    "לא נמצאו קבצים שהורדו. בדוק את תיקיית ההורדות של JDownloader."
+                )
 
             # 6. Handle output (zip/split if needed)
             try:
@@ -314,7 +334,8 @@ class JDownloaderDownload(BaseDownloader):
             meta = self._extract_video_metadata(primary_file)
             # Build caption using the filename as title (no _video_title set for JD downloads)
             import html as _html
-            title = primary_file.stem[:self._title_length]
+
+            title = primary_file.stem[: self._title_length]
             duration_minutes = int(meta["duration"]) // 60
             duration_seconds = int(meta["duration"]) % 60
             duration_str = f"{duration_minutes}:{duration_seconds:02d} דקות"
@@ -327,28 +348,46 @@ class JDownloaderDownload(BaseDownloader):
                 f"צפייה מהנה 👀✨"
             )
 
-            logging.info("JDownloader download complete - %d files to upload", len(files))
-            
+            logging.info(
+                "JDownloader download complete - %d files to upload", len(files)
+            )
+
             # Combine JDownloader files with subtitles from tempdir
             upload_files = [str(f) for f in files]
-            subtitle_extensions = {'.srt', '.vtt', '.ass', '.sub'}
+            subtitle_extensions = {".srt", ".vtt", ".ass", ".sub"}
             temp_subtitles = [
-                str(f) for f in Path(self._tempdir.name).glob("*") 
+                str(f)
+                for f in Path(self._tempdir.name).glob("*")
                 if f.suffix.lower() in subtitle_extensions
             ]
             if temp_subtitles:
-                logging.info("Including %d background subtitles in upload", len(temp_subtitles))
+                logging.info(
+                    "Including %d background subtitles in upload", len(temp_subtitles)
+                )
                 upload_files.extend(temp_subtitles)
-                
+
+            # 7.5 Release JDownloader slot early before starting the heavy upload
+            try:
+                JDownloaderManager._unregister_download(user_id, self._package_id)
+                logging.info("Released JD slot for user %s before upload", user_id)
+            except Exception:
+                pass
+
             self._upload(files=upload_files, meta=meta)
 
             # 8. Cleanup from JDownloader and disk (success path - delete files)
             _download_succeeded = True
             try:
-                self._manager.remove_download(self._package_id, user_id, delete_files=True)
-                logging.info("Removed JD package %s after successful upload", self._package_id)
+                self._manager.remove_download(
+                    self._package_id, user_id, delete_files=True
+                )
+                logging.info(
+                    "Removed JD package %s after successful upload", self._package_id
+                )
             except Exception as e:
-                logging.warning("Failed to remove JD package via API after success: %s", e)
+                logging.warning(
+                    "Failed to remove JD package via API after success: %s", e
+                )
 
             # Safety net: manually delete files from disk in case JD API didn't
             if output_path and output_path.exists():
@@ -363,15 +402,27 @@ class JDownloaderDownload(BaseDownloader):
                             parent.rmdir()
                     logging.info("Manually deleted downloaded files: %s", output_path)
                 except Exception as e:
-                    logging.warning("Failed to manually delete files %s: %s", output_path, e)
+                    logging.warning(
+                        "Failed to manually delete files %s: %s", output_path, e
+                    )
 
         finally:
             # On failure/cancellation - remove the stalled/errored package from JDownloader queue
-            if not _download_succeeded and self._manager and self._package_id is not None:
+            if (
+                not _download_succeeded
+                and self._manager
+                and self._package_id is not None
+            ):
                 try:
-                    self._manager.remove_download(self._package_id, user_id, delete_files=True)
-                    logging.info("Removed failed JD package %s from queue", self._package_id)
+                    self._manager.remove_download(
+                        self._package_id, user_id, delete_files=True
+                    )
+                    logging.info(
+                        "Removed failed JD package %s from queue", self._package_id
+                    )
                 except Exception as e:
-                    logging.warning("Failed to remove failed JD package from queue: %s", e)
+                    logging.warning(
+                        "Failed to remove failed JD package from queue: %s", e
+                    )
             # Always unregister to free concurrency slot
-            JDownloaderManager._unregister_download(user_id)
+            JDownloaderManager._unregister_download(user_id, self._package_id)

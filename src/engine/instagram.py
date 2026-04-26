@@ -12,6 +12,7 @@ from engine.base import BaseDownloader
 # Try to import instaloader, but make it optional
 try:
     import instaloader
+
     INSTALOADER_AVAILABLE = True
 except ImportError:
     INSTALOADER_AVAILABLE = False
@@ -41,8 +42,7 @@ class InstagramDownload(BaseDownloader):
             if match:
                 if pattern == patterns[0]:  # stories highlights
                     return self._url
-                else:
-                    return match.group(1)
+                return match.group(1)
 
         return None
 
@@ -53,15 +53,20 @@ class InstagramDownload(BaseDownloader):
     def _download_with_ytdlp(self) -> list:
         """Download Instagram content using yt-dlp."""
         from engine.generic import get_base_ytdlp_opts
+
         ydl_opts = get_base_ytdlp_opts(self._tempdir.name)
         ydl_opts["progress_hooks"] = [self._ytdlp_progress_hook]
-        
+
         # Add cookies if configured
         if INSTAGRAM_COOKIES_FILE:
             import os
+
             if os.path.exists(INSTAGRAM_COOKIES_FILE):
                 ydl_opts["cookiefile"] = INSTAGRAM_COOKIES_FILE
-                logging.info("Instagram: Using cookies file for yt-dlp: %s", INSTAGRAM_COOKIES_FILE)
+                logging.info(
+                    "Instagram: Using cookies file for yt-dlp: %s",
+                    INSTAGRAM_COOKIES_FILE,
+                )
         else:
             # Try to extract cookies from browser automatically
             # Priority: Chrome, Firefox, Edge
@@ -75,15 +80,21 @@ class InstagramDownload(BaseDownloader):
                 info = ydl.extract_info(self._url, download=True)
                 if info:
                     # Get all possible title fields and choose the longest one
-                    title_field = info.get('title', '') or ''
-                    desc_field = info.get('description', '') or ''
-                    fulltitle_field = info.get('fulltitle', '') or ''
+                    title_field = info.get("title", "") or ""
+                    desc_field = info.get("description", "") or ""
+                    fulltitle_field = info.get("fulltitle", "") or ""
                     title = max([title_field, desc_field, fulltitle_field], key=len)
                     if title:
                         self._video_title = title[:500]
-                        logging.info("Instagram: Extracted title (%d chars): %s", len(title), title[:100] if len(title) > 100 else title)
+                        logging.info(
+                            "Instagram: Extracted title (%d chars): %s",
+                            len(title),
+                            title[:100] if len(title) > 100 else title,
+                        )
 
-            files = [f for f in pathlib.Path(self._tempdir.name).rglob("*") if f.is_file()]
+            files = [
+                f for f in pathlib.Path(self._tempdir.name).rglob("*") if f.is_file()
+            ]
             if files:
                 logging.info("Instagram: yt-dlp succeeded!")
                 return [str(f) for f in files]
@@ -104,8 +115,10 @@ class InstagramDownload(BaseDownloader):
             return []
 
         try:
-            logging.info("Instagram: Trying instaloader fallback with shortcode: %s", shortcode)
-            
+            logging.info(
+                "Instagram: Trying instaloader fallback with shortcode: %s", shortcode
+            )
+
             L = instaloader.Instaloader(
                 download_videos=True,
                 download_video_thumbnails=False,
@@ -122,12 +135,13 @@ class InstagramDownload(BaseDownloader):
                 try:
                     # Extract username from session file name (format: session-USERNAME)
                     import os
+
                     session_filename = os.path.basename(INSTAGRAM_SESSION_FILE)
                     if session_filename.startswith("session-"):
                         username = session_filename[8:]  # Remove "session-" prefix
                     else:
                         username = session_filename
-                    
+
                     L.load_session_from_file(username, INSTAGRAM_SESSION_FILE)
                     logging.info("Instagram: Loaded session for user: %s", username)
                 except Exception as e:
@@ -137,12 +151,22 @@ class InstagramDownload(BaseDownloader):
             post = instaloader.Post.from_shortcode(L.context, shortcode)
             L.download_post(post, target="")
 
-            files = [f for f in pathlib.Path(self._tempdir.name).rglob("*") if f.is_file()]
+            files = [
+                f for f in pathlib.Path(self._tempdir.name).rglob("*") if f.is_file()
+            ]
             if files:
                 logging.info("Instagram: instaloader succeeded!")
                 # Filter out non-media files
-                media_files = [str(f) for f in files if f.suffix.lower() in ('.mp4', '.jpg', '.jpeg', '.png', '.webp')]
-                return media_files if media_files else [str(f) for f in files if f.is_file()]
+                media_files = [
+                    str(f)
+                    for f in files
+                    if f.suffix.lower() in (".mp4", ".jpg", ".jpeg", ".png", ".webp")
+                ]
+                return (
+                    media_files
+                    if media_files
+                    else [str(f) for f in files if f.is_file()]
+                )
 
         except Exception as e:
             logging.warning("Instagram: instaloader fallback failed: %s", e)
@@ -153,13 +177,16 @@ class InstagramDownload(BaseDownloader):
         """Progress hook for yt-dlp to update download status."""
         if d.get("status") == "downloading":
             try:
-                self.download_hook({
-                    "status": "downloading",
-                    "downloaded_bytes": d.get("downloaded_bytes", 0),
-                    "total_bytes": d.get("total_bytes") or d.get("total_bytes_estimate", 0),
-                    "_speed_str": d.get("_speed_str", "N/A"),
-                    "_eta_str": d.get("_eta_str", "N/A"),
-                })
+                self.download_hook(
+                    {
+                        "status": "downloading",
+                        "downloaded_bytes": d.get("downloaded_bytes", 0),
+                        "total_bytes": d.get("total_bytes")
+                        or d.get("total_bytes_estimate", 0),
+                        "_speed_str": d.get("_speed_str", "N/A"),
+                        "_eta_str": d.get("_eta_str", "N/A"),
+                    }
+                )
             except Exception:
                 pass
 
@@ -167,13 +194,17 @@ class InstagramDownload(BaseDownloader):
         """Download Instagram content, trying instaloader first (with session) then yt-dlp."""
         # Log session status
         if INSTAGRAM_SESSION_FILE:
-            logging.info("Instagram: Session file configured: %s", INSTAGRAM_SESSION_FILE)
+            logging.info(
+                "Instagram: Session file configured: %s", INSTAGRAM_SESSION_FILE
+            )
         else:
-            logging.info("Instagram: No session file configured, some content may be restricted")
-        
+            logging.info(
+                "Instagram: No session file configured, some content may be restricted"
+            )
+
         # Try instaloader first (better for restricted content when logged in)
         files = self._download_with_instaloader()
-        
+
         if files:
             return files
 
@@ -182,29 +213,31 @@ class InstagramDownload(BaseDownloader):
         files = self._download_with_ytdlp()
 
         if files:
-            has_video = any(f.endswith(('.mp4', '.webm', '.mkv')) for f in files)
-            has_image = any(f.endswith(('.jpg', '.jpeg', '.png', '.webp')) for f in files)
-            
+            has_video = any(f.endswith((".mp4", ".webm", ".mkv")) for f in files)
+            has_image = any(
+                f.endswith((".jpg", ".jpeg", ".png", ".webp")) for f in files
+            )
+
             if has_video:
                 self._format = "video"
             elif has_image:
                 self._format = "photo"
             else:
                 self._format = "document"
-            
+
             return files
 
         # Both methods failed
         error_msg = "הורדה מ-Instagram נכשלה!"
         self._bot_msg.edit_text(
-            f"❌ {error_msg}\n\n"
-            "התוכן מוגבל גיל או פרטי. נסה תוכן ציבורי אחר."
+            f"❌ {error_msg}\n\n" "התוכן מוגבל גיל או פרטי. נסה תוכן ציבורי אחר."
         )
 
         # Send error report to archive channel
         if ARCHIVE_CHANNEL:
             try:
                 from engine.helper import get_user_display_name
+
                 user_display = get_user_display_name(self._from_user)
 
                 report = (
@@ -217,7 +250,7 @@ class InstagramDownload(BaseDownloader):
                 self._client.send_message(
                     chat_id=ARCHIVE_CHANNEL,
                     text=report,
-                    link_preview_options=types.LinkPreviewOptions(is_disabled=True)
+                    link_preview_options=types.LinkPreviewOptions(is_disabled=True),
                 )
             except Exception as e:
                 logging.warning("Failed to send error to archive: %s", e)
@@ -228,6 +261,7 @@ class InstagramDownload(BaseDownloader):
         """Create custom archive caption for Instagram."""
         from pathlib import Path
         from engine.helper import get_user_display_name
+
         user_display = get_user_display_name(self._from_user)
 
         filename = "Unknown"
@@ -247,9 +281,6 @@ class InstagramDownload(BaseDownloader):
         if not downloaded_files:
             return
 
-        from pathlib import Path
-
-        files = [Path(f) for f in downloaded_files] if downloaded_files else [f for f in Path(self._tempdir.name).rglob("*") if f.is_file()]
         meta = self.get_metadata()
 
         success = self._upload(files=downloaded_files, meta=meta, skip_archive=True)
@@ -257,7 +288,7 @@ class InstagramDownload(BaseDownloader):
         # Custom archive handling for Instagram
         if ARCHIVE_CHANNEL and success:
             try:
-                msg_id = getattr(success, 'id', None)
+                msg_id = getattr(success, "id", None)
                 archive_caption = self._get_archive_caption(downloaded_files)
 
                 logging.info("Instagram: Copying to archive with custom caption")
@@ -265,7 +296,7 @@ class InstagramDownload(BaseDownloader):
                     chat_id=ARCHIVE_CHANNEL,
                     from_chat_id=self._chat_id,
                     message_id=msg_id,
-                    caption=archive_caption
+                    caption=archive_caption,
                 )
                 logging.info("Instagram: Forwarded to archive channel")
             except Exception as e:
