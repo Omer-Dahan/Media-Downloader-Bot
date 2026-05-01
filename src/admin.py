@@ -22,6 +22,7 @@ from utils import format_system_stats
 
 # State management for admin actions
 _admin_state: dict[int, dict] = {}
+_admin_state_lock = threading.Lock()
 
 
 def is_owner(user_id: int) -> bool:
@@ -81,6 +82,11 @@ def admin_panel_command(client: Client, message: types.Message):
                     "⬆️ עדכון yt-dlp והפעלה מחדש", callback_data="admin:update_ytdlp"
                 )
             ],
+            [
+                types.InlineKeyboardButton(
+                    "🗑️ ניקוי מטמון", callback_data="admin:clear_cache"
+                )
+            ],
         ]
     )
 
@@ -127,6 +133,10 @@ def admin_callback_handler(client: Client, callback_query: types.CallbackQuery):
         handle_update_ytdlp(client, callback_query)
     elif action == "update_ytdlp_confirm":
         handle_update_ytdlp_confirm(client, callback_query)
+    elif action == "clear_cache":
+        handle_clear_cache(client, callback_query)
+    elif action == "clear_cache_confirm":
+        handle_clear_cache_confirm(client, callback_query)
     elif action == "back":
         handle_back_to_menu(client, callback_query)
 
@@ -309,7 +319,8 @@ def handle_add_credits_prompt(client: Client, callback_query: types.CallbackQuer
     callback_query.answer()
     user_id = callback_query.from_user.id
 
-    _admin_state[user_id] = {"action": "add_credits"}
+    with _admin_state_lock:
+        _admin_state[user_id] = {"action": "add_credits"}
 
     callback_query.message.edit_text(
         "➕ **הוספת קרדיטים**\n\nשלח הודעה בפורמט:\n`USER_ID כמות`\n\nלדוגמה: `123456789 50`",
@@ -324,7 +335,8 @@ def handle_reset_quota_prompt(client: Client, callback_query: types.CallbackQuer
     callback_query.answer()
     user_id = callback_query.from_user.id
 
-    _admin_state[user_id] = {"action": "reset_quota"}
+    with _admin_state_lock:
+        _admin_state[user_id] = {"action": "reset_quota"}
 
     callback_query.message.edit_text(
         "🔄 **איפוס מכסה**\n\nשלח את ה-User ID של המשתמש לאיפוס:",
@@ -339,7 +351,8 @@ def handle_block_user_prompt(client: Client, callback_query: types.CallbackQuery
     callback_query.answer()
     user_id = callback_query.from_user.id
 
-    _admin_state[user_id] = {"action": "block_user"}
+    with _admin_state_lock:
+        _admin_state[user_id] = {"action": "block_user"}
 
     callback_query.message.edit_text(
         "🚫 **חסימת משתמש**\n\nשלח את ה-User ID של המשתמש לחסימה:",
@@ -374,7 +387,8 @@ def handle_back_to_menu(client: Client, callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
 
     # Clear any pending state
-    _admin_state.pop(user_id, None)
+    with _admin_state_lock:
+        _admin_state.pop(user_id, None)
 
     try:
         callback_query.answer()
@@ -424,6 +438,11 @@ def handle_back_to_menu(client: Client, callback_query: types.CallbackQuery):
                     "⬆️ עדכון yt-dlp והפעלה מחדש", callback_data="admin:update_ytdlp"
                 )
             ],
+            [
+                types.InlineKeyboardButton(
+                    "🗑️ ניקוי מטמון", callback_data="admin:clear_cache"
+                )
+            ],
         ]
     )
 
@@ -439,52 +458,53 @@ def admin_text_handler(client: Client, message: types.Message):
     if not is_owner(user_id):
         return
 
-    if user_id not in _admin_state:
-        return
+    with _admin_state_lock:
+        if user_id not in _admin_state:
+            return
 
-    text = message.text.strip()
+        text = message.text.strip()
 
-    # If it's a command (starts with /), clear state and let other handlers process it
-    if text.startswith("/"):
-        _admin_state.pop(user_id, None)
-        return
-
-    state = _admin_state[user_id]
-    action = state.get("action")
-
-    if action == "add_credits":
-        try:
-            parts = text.split()
-            target_id = int(parts[0])
-            amount = int(parts[1])
-            add_paid_quota(target_id, amount)
-            message.reply_text(
-                f"✅ נוספו {amount} קרדיטים למשתמש {target_id}", quote=True
-            )
-        except (ValueError, IndexError):
-            message.reply_text("❌ פורמט שגוי. השתמש: `USER_ID כמות`", quote=True)
-        finally:
+        # If it's a command (starts with /), clear state and let other handlers process it
+        if text.startswith("/"):
             _admin_state.pop(user_id, None)
+            return
 
-    elif action == "reset_quota":
-        try:
-            target_id = int(text)
-            reset_user_quota(target_id)
-            message.reply_text(f"✅ המכסה אופסה למשתמש {target_id}", quote=True)
-        except ValueError:
-            message.reply_text("❌ User ID לא תקין", quote=True)
-        finally:
-            _admin_state.pop(user_id, None)
+        state = _admin_state[user_id]
+        action = state.get("action")
 
-    elif action == "block_user":
-        try:
-            target_id = int(text)
-            block_user(target_id)
-            message.reply_text(f"✅ המשתמש {target_id} נחסם", quote=True)
-        except ValueError:
-            message.reply_text("❌ User ID לא תקין", quote=True)
-        finally:
-            _admin_state.pop(user_id, None)
+        if action == "add_credits":
+            try:
+                parts = text.split()
+                target_id = int(parts[0])
+                amount = int(parts[1])
+                add_paid_quota(target_id, amount)
+                message.reply_text(
+                    f"✅ נוספו {amount} קרדיטים למשתמש {target_id}", quote=True
+                )
+            except (ValueError, IndexError):
+                message.reply_text("❌ פורמט שגוי. השתמש: `USER_ID כמות`", quote=True)
+            finally:
+                _admin_state.pop(user_id, None)
+
+        elif action == "reset_quota":
+            try:
+                target_id = int(text)
+                reset_user_quota(target_id)
+                message.reply_text(f"✅ המכסה אופסה למשתמש {target_id}", quote=True)
+            except ValueError:
+                message.reply_text("❌ User ID לא תקין", quote=True)
+            finally:
+                _admin_state.pop(user_id, None)
+
+        elif action == "block_user":
+            try:
+                target_id = int(text)
+                block_user(target_id)
+                message.reply_text(f"✅ המשתמש {target_id} נחסם", quote=True)
+            except ValueError:
+                message.reply_text("❌ User ID לא תקין", quote=True)
+            finally:
+                _admin_state.pop(user_id, None)
 
 
 def handle_update_ytdlp(client: Client, callback_query: types.CallbackQuery):
@@ -582,6 +602,56 @@ def handle_update_ytdlp_confirm(client: Client, callback_query: types.CallbackQu
         logging.error("Failed to update yt-dlp from admin panel: %s", e)
         callback_query.message.edit_text(
             f"❌ **העדכון נכשל**\n\nשגיאה: `{e}`",
+            reply_markup=types.InlineKeyboardMarkup(
+                [[types.InlineKeyboardButton("🔙 חזרה", callback_data="admin:back")]]
+            ),
+        )
+
+
+def handle_clear_cache(client: Client, callback_query: types.CallbackQuery):
+    """Show clear cache confirmation."""
+    callback_query.answer()
+    
+    callback_query.message.edit_text(
+        "🗑️ **ניקוי מטמון (Cache)**\n\n"
+        "פעולה זו תמחק את כל הקבצים השמורים בזיכרון המטמון של הבוט.\n"
+        "כלומר, הורדות חוזרות של אותם קישורים ירדו מחדש מהרשת במקום להישלח מיד משרתי טלגרם.\n\n"
+        "זה שימושי במקרה שהבוט זוכר ושולח קבצים לא נכונים בעקבות שגיאה קודמת.\n\n"
+        "להמשיך ולנקות?",
+        reply_markup=types.InlineKeyboardMarkup(
+            [
+                [
+                    types.InlineKeyboardButton(
+                        "✅ כן, נקה הכל",
+                        callback_data="admin:clear_cache_confirm",
+                    )
+                ],
+                [types.InlineKeyboardButton("🔙 חזרה", callback_data="admin:back")],
+            ]
+        ),
+    )
+
+
+def handle_clear_cache_confirm(client: Client, callback_query: types.CallbackQuery):
+    """Actually clear the cache."""
+    callback_query.answer("מנקה מטמון...")
+    
+    try:
+        from database.cache import Redis
+        redis_client = Redis()
+        deleted_count = redis_client.clear_all_cache()
+        
+        callback_query.message.edit_text(
+            f"✅ **זיכרון המטמון נוקה בהצלחה!**\n\n"
+            f"נמחקו {deleted_count} רשומות מהמטמון.",
+            reply_markup=types.InlineKeyboardMarkup(
+                [[types.InlineKeyboardButton("🔙 חזרה לניהול", callback_data="admin:back")]]
+            ),
+        )
+    except Exception as e:
+        logging.error("Failed to clear cache: %s", e)
+        callback_query.message.edit_text(
+            f"❌ **שגיאה בניקוי המטמון:**\n\n`{e}`",
             reply_markup=types.InlineKeyboardMarkup(
                 [[types.InlineKeyboardButton("🔙 חזרה", callback_data="admin:back")]]
             ),

@@ -118,3 +118,18 @@ class Redis:
             return False
         finally:
             session.close()
+
+    def clear_all_cache(self) -> int:
+        """Clear the entire cache. Returns the number of deleted entries."""
+        session = _get_session()
+        try:
+            deleted = session.query(VideoCache).delete()
+            session.commit()
+            logging.info("Cleared entire video cache (%d entries)", deleted)
+            return deleted
+        except Exception as e:
+            session.rollback()
+            logging.error("Failed to clear cache: %s", e)
+            return 0
+        finally:
+            session.close()

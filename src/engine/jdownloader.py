@@ -55,6 +55,7 @@ class JDownloaderDownload(BaseDownloader):
         super().__init__(client, bot_msg, url)
         self._manager: JDownloaderManager | None = None
         self._package_id: int | None = None
+        self._package_name: str | None = None
         self._user_id: int = bot_msg.chat.id
         self._start_time: float = 0
         self._last_speed: float = 0
@@ -170,10 +171,10 @@ class JDownloaderDownload(BaseDownloader):
         Returns:
             True if download is complete, False otherwise
         """
-        if not self._manager or self._package_id is None:
+        if not self._manager or not self._package_name:
             return False
 
-        status = self._manager.get_status(self._package_id)
+        status = self._manager.get_status(self._package_name)
         state = status.get("state", "")
 
         # Update Telegram message
@@ -208,35 +209,19 @@ class JDownloaderDownload(BaseDownloader):
 
     def _handle_output(self, output_path: Path) -> list[Path]:
         """
-        Prepare output for upload - ZIP if folder, split if too large.
-
+        Prepare output for upload.
+        
         Returns:
             List of file paths ready for upload
         """
         if output_path.is_dir():
-            # Multiple files - check if needs archiving
             files = list(output_path.rglob("*"))
             files = [f for f in files if f.is_file()]
 
             if not files:
                 raise JDownloaderError("לא נמצאו קבצים בתיקיית ההורדה")
 
-            if len(files) == 1:
-                return [files[0]]
-
-            # Multiple files - create ZIP
-            if needs_archive(output_path):
-                total_size = sum(f.stat().st_size for f in files)
-                if total_size > 2 * 1024 * 1024 * 1024:  # > 2GB
-                    return create_split_archive(output_path, Path(self._tempdir.name))
-                return [create_zip(output_path, Path(self._tempdir.name))]
-
             return files
-
-        # Single file
-        file_size = output_path.stat().st_size
-        if file_size > 2 * 1024 * 1024 * 1024:  # > 2GB
-            return split_file(output_path, Path(self._tempdir.name))
 
         return [output_path]
 
@@ -266,7 +251,7 @@ class JDownloaderDownload(BaseDownloader):
         # 3. Add link
         self.edit_text("🔧 **JDownloader2**\n\n📎 מוסיף קישור להורדה...")
         try:
-            self._package_id = self._manager.add_link(self._url, user_id)
+            self._package_id, self._package_name = self._manager.add_link(self._url, user_id)
         except JDownloaderConcurrencyError:
             raise
         except JDownloaderError as e:
@@ -313,7 +298,7 @@ class JDownloaderDownload(BaseDownloader):
                 "🔧 **JDownloader2**\n\n✅ ההורדה הסתיימה!\n📦 מכין קבצים להעלאה..."
             )
 
-            output_path = self._manager.get_output_path(self._package_id)
+            output_path = self._manager.get_output_path(self._package_name)
             if not output_path or not output_path.exists():
                 raise JDownloaderError(
                     "לא נמצאו קבצים שהורדו. בדוק את תיקיית ההורדות של JDownloader."

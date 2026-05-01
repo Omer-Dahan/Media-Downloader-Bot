@@ -218,7 +218,7 @@ class JDownloaderManager:
         ".jsp",
     )
 
-    def add_link(self, url: str, user_id: int) -> int:
+    def add_link(self, url: str, user_id: int) -> tuple[int, str]:
         """
         Add a link to JDownloader for download.
 
@@ -227,7 +227,7 @@ class JDownloaderManager:
             user_id: Telegram user ID for tracking
 
         Returns:
-            Package ID for tracking
+            Tuple of (Package ID, Package Name)
         """
         # Check concurrency limits
         can_start, reason = self.can_start_download(user_id)
@@ -235,28 +235,32 @@ class JDownloaderManager:
             raise JDownloaderConcurrencyError(reason)
 
         try:
-            # Snapshot existing linkgrabber package UUIDs BEFORE adding our link
-            existing_uuids = self._get_linkgrabber_uuids()
+            import uuid
+            uid_str = uuid.uuid4().hex[:8]
+            pkg_name = f"TGBot_{user_id}_{uid_str}"
+            dest_folder = str(Path(JDOWNLOADER_DOWNLOAD_DIR) / pkg_name)
 
             self._device.linkgrabber.add_links(
                 [
                     {
                         "autostart": False,  # keep in linkgrabber until we filter
                         "links": url,
-                        "packageName": f"TGBot_{user_id}",
-                        "destinationFolder": JDOWNLOADER_DOWNLOAD_DIR,
+                        "packageName": pkg_name,
+                        "destinationFolder": dest_folder,
+                        "overwritePackagizerRules": True,
                     }
                 ]
             )
 
             # Retry loop: wait up to 60s for JDownloader to crawl the URL
-            # and create a NEW package that wasn't there before
+            # and create a NEW package that matches our unique name or folder
             package_id = None
             deadline = time.time() + 60
             while time.time() < deadline:
                 time.sleep(2)
-                package_id = self._find_new_package(existing_uuids)
-                if package_id is not None:
+                result = self._find_package_in_linkgrabber(pkg_name, dest_folder)
+                if result is not None:
+                    package_id, _ = result
                     break
             else:
                 raise JDownloaderError(
@@ -275,12 +279,13 @@ class JDownloaderManager:
             self._register_download(user_id, package_id)
 
             logging.info(
-                "Added link to JDownloader for user %s: %s (package: %s)",
+                "Added link to JDownloader for user %s: %s (package: %s, dest: %s)",
                 user_id,
                 url,
                 package_id,
+                pkg_name,
             )
-            return package_id
+            return package_id, pkg_name
 
         except JDownloaderError:
             raise
@@ -288,31 +293,28 @@ class JDownloaderManager:
             logging.error("Failed to add link to JDownloader: %s", e)
             raise JDownloaderError(f"שגיאה בהוספת הקישור ל-JDownloader: {e}") from e
 
-    def _get_linkgrabber_uuids(self) -> set[int]:
-        """Return a set of all current linkgrabber package UUIDs."""
+    def _find_package_in_linkgrabber(self, target_name: str, target_dest: str) -> tuple[int, str] | None:
         try:
-            packages = self._device.linkgrabber.query_packages([{}])
-            return {p["uuid"] for p in (packages or []) if "uuid" in p}
-        except Exception as e:
-            logging.warning("Could not snapshot linkgrabber UUIDs: %s", e)
-            return set()
-
-    def _find_new_package(self, existing_uuids: set[int]) -> int | None:
-        """Find a package UUID in the linkgrabber that wasn't in the snapshot."""
-        try:
-            packages = self._device.linkgrabber.query_packages([{"name": True}])
+            packages = self._device.linkgrabber.query_packages([{"name": True, "saveTo": True}])
             if packages:
+                from pathlib import Path
+                expected_dest = Path(target_dest)
                 for pkg in packages:
                     uid = pkg.get("uuid")
-                    if uid and uid not in existing_uuids:
-                        logging.info(
-                            "Found new JD package: uuid=%s name='%s'",
-                            uid,
-                            pkg.get("name"),
-                        )
-                        return uid
+                    name = pkg.get("name")
+                    save_to = pkg.get("saveTo")
+                    
+                    if uid:
+                        # Match by unique destination folder OR exact name
+                        if (save_to and Path(save_to) == expected_dest) or name == target_name:
+                            logging.info(
+                                "Found JD package in linkgrabber: uuid=%s name='%s'",
+                                uid,
+                                name,
+                            )
+                            return uid, name
         except Exception as e:
-            logging.error("Error searching for new package: %s", e)
+            logging.error("Error searching for package in linkgrabber: %s", e)
         return None
 
     def _filter_video_links_in_package(self, package_id: int) -> None:
@@ -425,9 +427,9 @@ class JDownloaderManager:
         name = (link.get("name") or "").lower()
         return any(name.endswith(ext) for ext in cls.JUNK_EXTENSIONS)
 
-    def get_status(self, package_id: int) -> dict[str, Any]:
+    def get_status(self, package_name: str) -> dict[str, Any]:
         """
-        Get current status of a download package.
+        Get current status of a download package by name.
 
         Returns:
             Dict with: progress (0-100), speed (bytes/s), eta (seconds),
@@ -473,19 +475,24 @@ class JDownloaderManager:
             if not packages:
                 return {"state": "missing", "error": "חבילת ההורדה לא נמצאה"}
 
-            # Find our package
+            # Find our package by destination folder (saveTo) since name can be overridden by plugins
+            expected_dest = Path(JDOWNLOADER_DOWNLOAD_DIR) / package_name
             pkg = None
             for p in packages:
-                if p.get("uuid") == package_id:
+                save_to = p.get("saveTo")
+                if save_to and Path(save_to) == expected_dest:
                     pkg = p
                     break
 
             if pkg is None:
-                # Package might have finished and been removed, check by most recent
-                pkg = packages[-1] if packages else None
-
-            if pkg is None:
-                return {"state": "missing", "error": "חבילת ההורדה לא נמצאה"}
+                # Might still be moving from linkgrabber to downloads list
+                return {
+                    "state": "waiting", 
+                    "error": "", 
+                    "progress": 0.0, 
+                    "speed": 0, 
+                    "name": package_name
+                }
 
             total = pkg.get("bytesTotal", 0) or 0
             downloaded = pkg.get("bytesLoaded", 0) or 0
@@ -521,12 +528,12 @@ class JDownloaderManager:
             logging.error("Failed to get JDownloader status: %s", e)
             return {"state": "error", "error": str(e)}
 
-    def is_complete(self, package_id: int) -> bool:
+    def is_complete(self, package_name: str) -> bool:
         """Check if download is complete."""
-        status = self.get_status(package_id)
+        status = self.get_status(package_name)
         return status.get("state") == "finished" or status.get("progress", 0) >= 100
 
-    def get_output_path(self, package_id: int) -> Path | None:
+    def get_output_path(self, package_name: str) -> Path | None:
         """
         Get the path to downloaded content.
 
@@ -545,25 +552,18 @@ class JDownloaderManager:
             if not packages:
                 return None
 
-            # Find our package
+            expected_dest = Path(JDOWNLOADER_DOWNLOAD_DIR) / package_name
             for p in packages:
-                if p.get("uuid") == package_id:
-                    save_to = p.get("saveTo")
-                    if save_to:
-                        path = Path(save_to)
-                        if path.exists():
-                            return path
+                save_to = p.get("saveTo")
+                if save_to and Path(save_to) == expected_dest:
+                    path = Path(save_to)
+                    if path.exists():
+                        return path
                     break
 
-            # Fallback: check the default download directory
-            dl_dir = Path(JDOWNLOADER_DOWNLOAD_DIR)
-            if dl_dir.exists():
-                # Find the most recently modified item
-                items = sorted(
-                    dl_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True
-                )
-                if items:
-                    return items[0]
+            # Fallback: check if the unique directory exists on disk anyway
+            if expected_dest.exists():
+                return expected_dest
 
             return None
 

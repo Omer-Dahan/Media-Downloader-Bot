@@ -239,8 +239,8 @@ def check_and_send_update_notification(client):
         # Clean up flag file even if notification fails
         try:
             UPDATE_FLAG_FILE.unlink()
-        except:
-            pass
+        except Exception as del_error:
+            logging.warning("Failed to delete update flag file: %s", del_error)
 
 
 def restart_bot():

@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import tempfile
+import threading
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -35,9 +36,11 @@ from engine.helper import sizeof_fmt, safe_truncate, create_telegraph_page
 from engine.network_errors import format_network_error_message
 
 cancellation_events = set()
+_cancellation_lock = threading.Lock()
 
 # Global storage for resume state (maps state_hash to resume info)
 _resume_state_cache: dict[str, dict] = {}
+_resume_state_lock = threading.Lock()
 
 
 def generate_input_media(file_paths: list, cap: str) -> list:
@@ -216,9 +219,10 @@ class BaseDownloader(ABC):
 
     def check_for_cancel(self):
         key = f"{self._chat_id}_{self._id}"
-        if key in cancellation_events:
-            cancellation_events.discard(key)
-            raise ValueError("ההורדה בוטלה על ידי המשתמש 🛑")
+        with _cancellation_lock:
+            if key in cancellation_events:
+                cancellation_events.discard(key)
+                raise ValueError("ההורדה בוטלה על ידי המשתמש 🛑")
 
     def edit_text(self, text: str):
         # Rate limit to avoid "Waiting for..." spam from Pyrogram
@@ -279,19 +283,20 @@ class BaseDownloader(ABC):
             f"{self._url}:{self._chat_id}:{self._id}".encode(), usedforsecurity=False
         ).hexdigest()[:8]
 
-        _resume_state_cache[state_hash] = {
-            "url": self._url,
-            "chat_id": self._chat_id,
-            "from_user": self._from_user,
-            "message_id": self._id,
-            "downloaded_bytes": downloaded_bytes,
-            "total_bytes": total_bytes,
-            "quality": quality or self._quality,
-            "format": self._format,
-            "partial_file": partial_file,
-            "download_type": download_type,
-            "tempdir": self._tempdir.name if hasattr(self, "_tempdir") else None,
-        }
+        with _resume_state_lock:
+            _resume_state_cache[state_hash] = {
+                "url": self._url,
+                "chat_id": self._chat_id,
+                "from_user": self._from_user,
+                "message_id": self._id,
+                "downloaded_bytes": downloaded_bytes,
+                "total_bytes": total_bytes,
+                "quality": quality or self._quality,
+                "format": self._format,
+                "partial_file": partial_file,
+                "download_type": download_type,
+                "tempdir": self._tempdir.name if hasattr(self, "_tempdir") else None,
+            }
 
         # Format error message
         text = format_network_error_message(downloaded_bytes, total_bytes)
@@ -404,7 +409,9 @@ class BaseDownloader(ABC):
                 width = item["width"]
             duration = int(float(video_streams["format"]["duration"]))
         except Exception as e:
-            logging.error("Error while getting metadata: %s", e)
+            err_details = getattr(e, "stderr", b"")
+            err_details = err_details.decode("utf-8", "ignore") if isinstance(err_details, bytes) else str(err_details)
+            logging.error("Error while getting metadata: %s | Details: %s", e, err_details)
         try:
             thumb_path = Path(video_path).parent.joinpath(
                 f"{uuid.uuid4().hex}-thumbnail.png"
@@ -423,7 +430,9 @@ class BaseDownloader(ABC):
                 )
                 thumb = None
         except ffmpeg._run.Error as e:
-            logging.warning("Failed to create thumbnail: %s", e)
+            err_details = getattr(e, "stderr", b"")
+            err_details = err_details.decode("utf-8", "ignore") if isinstance(err_details, bytes) else str(err_details)
+            logging.warning("Failed to create thumbnail: %s | Details: %s", e, err_details)
             thumb = None
 
         # Format duration as minutes:seconds
@@ -520,7 +529,9 @@ class BaseDownloader(ABC):
                 thumb = None
 
         except Exception as e:
-            logging.warning("Failed to extract video metadata: %s", e)
+            err_details = getattr(e, "stderr", b"")
+            err_details = err_details.decode("utf-8", "ignore") if isinstance(err_details, bytes) else str(err_details)
+            logging.warning("Failed to extract video metadata: %s | Details: %s", e, err_details)
 
         return {"duration": duration, "width": width, "height": height, "thumb": thumb}
 
@@ -713,15 +724,15 @@ class BaseDownloader(ABC):
                 for p in parts:
                     try:
                         p.unlink()
-                    except:
-                        pass
+                    except Exception as e:
+                        logging.warning("Failed to delete part file: %s", e)
                 raise ValueError(f"נכשל בפיצול הסרטון: {e}") from e
 
         # Remove original file to save space
         try:
             video_path.unlink()
-        except:
-            pass
+        except Exception as e:
+            logging.warning("Failed to delete original video file: %s", e)
 
         return parts
 
@@ -803,8 +814,8 @@ class BaseDownloader(ABC):
                 # Clean up part file
                 try:
                     part_path.unlink()
-                except:
-                    pass
+                except Exception as e:
+                    logging.warning("Failed to delete video part: %s", e)
 
         # Forward all parts to archive channel
         if ARCHIVE_CHANNEL and sent_messages:
@@ -925,8 +936,8 @@ class BaseDownloader(ABC):
                         # Handle success message
                         try:
                             self._bot_msg.delete()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logging.debug("Failed to delete progress message: %s", e)
                         return success
 
         success = SimpleNamespace(
@@ -1162,8 +1173,8 @@ class BaseDownloader(ABC):
         # Delete the progress/status message — the uploaded file is the confirmation
         try:
             self._bot_msg.delete()
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug("Failed to delete progress message after upload: %s", e)
         return success
 
     def _get_video_cache(self):
@@ -1231,8 +1242,8 @@ class BaseDownloader(ABC):
                     time.sleep(5)
                     try:
                         notif_msg.delete()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.debug("Failed to delete notification: %s", e)
 
                 threading.Thread(target=delete_notification, daemon=True).start()
             except Exception as e:

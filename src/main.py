@@ -254,7 +254,7 @@ def ping_handler(client: Client, message: types.Message):
         time.sleep(1)
         client.delete_messages(chat_id=reply.chat.id, message_ids=reply.id)
 
-    thread = threading.Thread(target=send_message_and_measure_ping)
+    thread = threading.Thread(target=send_message_and_measure_ping, daemon=True)
     thread.start()
 
 
