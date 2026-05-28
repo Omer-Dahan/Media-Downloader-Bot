@@ -5,6 +5,7 @@ import time
 import subprocess
 import logging
 import threading
+import psutil
 from pyrogram import Client, types
 
 from config import OWNER
@@ -87,6 +88,11 @@ def admin_panel_command(client: Client, message: types.Message):
                     "🗑️ ניקוי מטמון", callback_data="admin:clear_cache"
                 )
             ],
+            [
+                types.InlineKeyboardButton(
+                    "🚀 הפעל JDownloader", callback_data="admin:run_jdownloader"
+                )
+            ],
         ]
     )
 
@@ -137,6 +143,8 @@ def admin_callback_handler(client: Client, callback_query: types.CallbackQuery):
         handle_clear_cache(client, callback_query)
     elif action == "clear_cache_confirm":
         handle_clear_cache_confirm(client, callback_query)
+    elif action == "run_jdownloader":
+        handle_run_jdownloader(client, callback_query)
     elif action == "back":
         handle_back_to_menu(client, callback_query)
 
@@ -443,6 +451,11 @@ def handle_back_to_menu(client: Client, callback_query: types.CallbackQuery):
                     "🗑️ ניקוי מטמון", callback_data="admin:clear_cache"
                 )
             ],
+            [
+                types.InlineKeyboardButton(
+                    "🚀 הפעל JDownloader", callback_data="admin:run_jdownloader"
+                )
+            ],
         ]
     )
 
@@ -606,6 +619,73 @@ def handle_update_ytdlp_confirm(client: Client, callback_query: types.CallbackQu
                 [[types.InlineKeyboardButton("🔙 חזרה", callback_data="admin:back")]]
             ),
         )
+
+
+def handle_run_jdownloader(client: Client, callback_query: types.CallbackQuery):
+    """Start JDownloader 2 on the local machine if it is not already running."""
+    is_running = False
+    for proc in psutil.process_iter(["name", "cmdline"]):
+        try:
+            name = proc.info["name"]
+            if name:
+                name_lower = name.lower()
+                if name_lower in ("jdownloader2.exe", "jdownloader.exe"):
+                    is_running = True
+                    break
+                if name_lower in ("java.exe", "javaw.exe", "java", "javaw"):
+                    cmdline = proc.info["cmdline"]
+                    if cmdline and any("jdownloader" in arg.lower() for arg in cmdline):
+                        is_running = True
+                        break
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+
+    if is_running:
+        callback_query.answer("ℹ️ JDownloader כבר פעיל ברקע.", show_alert=True)
+        return
+
+    jd_path = r"C:\Users\omer\AppData\Local\JDownloader 2\JDownloader2.exe"
+    if not os.path.exists(jd_path):
+        callback_query.answer("❌ קובץ ההפעלה של JDownloader לא נמצא בנתיב המוגדר.", show_alert=True)
+        return
+
+    try:
+        creation_flags = 0
+        if sys.platform == "win32":
+            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+
+        subprocess.Popen(
+            [jd_path],
+            creationflags=creation_flags,
+            close_fds=True
+        )
+        time.sleep(1.5)
+        
+        started = False
+        for proc in psutil.process_iter(["name", "cmdline"]):
+            try:
+                name = proc.info["name"]
+                if name:
+                    name_lower = name.lower()
+                    if name_lower in ("jdownloader2.exe", "jdownloader.exe"):
+                        started = True
+                        break
+                    if name_lower in ("java.exe", "javaw.exe", "java", "javaw"):
+                        cmdline = proc.info["cmdline"]
+                        if cmdline and any("jdownloader" in arg.lower() for arg in cmdline):
+                            started = True
+                            break
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+                
+        if started:
+            callback_query.answer("🚀 JDownloader הופעל בהצלחה ברקע!", show_alert=True)
+        else:
+            callback_query.answer("⚠️ פקודת ההפעלה נשלחה, אך התהליך לא זוהה מיד ברשימה.", show_alert=True)
+            
+    except OSError as e:
+        logging.error("Failed to start JDownloader: %s", e)
+        callback_query.answer(f"❌ שגיאה בהפעלת JDownloader: {e}", show_alert=True)
 
 
 def handle_clear_cache(client: Client, callback_query: types.CallbackQuery):

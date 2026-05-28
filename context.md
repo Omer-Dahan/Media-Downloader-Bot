@@ -60,7 +60,7 @@ This project is a Telegram Bot designed to download media from various platforms
 
 ### 5. Admin System (`src/admin.py`)
 - Accessible via `/adminpanel`.
-- Features: Server stats (CPU/RAM), Download stats (Global usage), User list management, Block/Unblock users, Add/Reset credits.
+- Features: Server stats (CPU/RAM), Download stats (Global usage), User list management, Block/Unblock users, Add/Reset credits, Launch JDownloader 2.
 
 ## Key Attributes
 - **Concurrency**: `src/engine/concurrency.py` ensures users don't spam downloads (limit 1 free, 6 paid).
