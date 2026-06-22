@@ -743,7 +743,7 @@ class YoutubeDownload(BaseDownloader):
             default_formats = self._setup_formats()
             if formats is not None:
                 # formats according to user choice
-                default_formats = formats + self._setup_formats()
+                default_formats = formats + default_formats
             files = self._download(default_formats)
 
             # Debug: log what files are in tempdir

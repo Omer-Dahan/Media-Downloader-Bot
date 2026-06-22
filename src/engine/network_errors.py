@@ -28,7 +28,6 @@ YTDLP_NETWORK_PATTERNS = [
     "Connection refused",
     "Connection timed out",
     "timed out",
-    "Unable to download",
     "urlopen error",
     "Network is unreachable",
     "No route to host",

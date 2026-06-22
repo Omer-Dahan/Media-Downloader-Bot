@@ -242,14 +242,9 @@ class DirectDownload(BaseDownloader):
                     self.download_hook({"status": "complete"})
 
             self._process.wait(timeout=300)
-            success = self._process.wait() == 0
-            if not success:
-                raise subprocess.CalledProcessError(
-                    self._process.returncode, command, self._process.stderr.read()
-                )
             if self._process.returncode != 0:
                 raise subprocess.CalledProcessError(
-                    self._process.returncode, command, stderr
+                    self._process.returncode, command, self._process.stderr.read()
                 )
 
             # This will get [Path_object] if a file is found, or None if no files are found.
@@ -272,14 +267,16 @@ class DirectDownload(BaseDownloader):
 
             return files
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             error_msg = "\u05d4\u05d4\u05d5\u05e8\u05d3\u05d4 \u05d4\u05d5\u05e4\u05e1\u05e7\u05d4 \u05e2\u05e7\u05d1 \u05d7\u05e8\u05d9\u05d2\u05d4 \u05de\u05d6\u05de\u05df \u05d4\u05d4\u05de\u05ea\u05e0\u05d4 (5 \u05d3\u05e7\u05d5\u05ea)."
             logging.error(error_msg)
-            self.edit_text(f"ההורדה נכשלה!❌\n\n{error_msg}")
-            return []
+            raise ValueError(error_msg) from e
+        except ValueError:
+            # Propagate cancellation / explicit value errors unchanged
+            raise
         except Exception as e:
-            self.edit_text(f"ההורדה נכשלה!❌\n\n`{e}`")
-            return []
+            # Surface the failure so the caller can fall back (requests/JDownloader)
+            raise ValueError(f"הורדת aria2 נכשלה: {e}") from e
         finally:
             if self._process:
                 self._process.terminate()
@@ -335,7 +332,16 @@ class DirectDownload(BaseDownloader):
     def _download(self, formats=None) -> list:
         logging.info("[DirectDownload] ENABLE_ARIA2=%s", ENABLE_ARIA2)
         if ENABLE_ARIA2:
-            return self._aria2_download()
+            try:
+                return self._aria2_download()
+            except ValueError as e:
+                # Don't retry a user-cancelled download
+                if "בוטלה" in str(e):
+                    raise
+                logging.warning(
+                    "aria2 download failed, falling back to requests: %s", e
+                )
+                return self._requests_download()
         return self._requests_download()
 
     def _start(self):

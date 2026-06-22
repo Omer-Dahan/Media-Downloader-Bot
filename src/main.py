@@ -313,7 +313,7 @@ def successful_payment(client: Client, message: types.Message):
     quota = int(message.successful_payment.invoice_payload)
     ch = message.successful_payment.provider_payment_charge_id
     free, paid = credit_account(who, amount, quota, ch)
-    if paid > 0:
+    if paid and paid > 0:
         message.reply_text(
             f"התשלום בוצע בהצלחה! יש לך {free} קרדיטים חינמיים ו-{paid} קרדיטים בתשלום."
         )
@@ -578,6 +578,7 @@ def download_handler(client: Client, message: types.Message):
     # Start request logging
     start_request_log(url, chat_id)
 
+    slot_acquired = False
     try:
         link_check_result = check_link(url, chat_id)
 
@@ -598,6 +599,7 @@ def download_handler(client: Client, message: types.Message):
                 quote=True,
             )
             return
+        slot_acquired = True
 
         # Check if this is a YouTube link - show quality selection menu
         if is_youtube(url):
@@ -704,6 +706,10 @@ def download_handler(client: Client, message: types.Message):
         )
     finally:
         end_request_log()
+        # Release the concurrency slot. For the YouTube menu path this is correct
+        # too: the actual download re-acquires its own slot in the quality callback.
+        if slot_acquired:
+            concurrency_manager.release(chat_id)
 
 
 @app.on_message(filters.document & filters.private)
@@ -1026,17 +1032,11 @@ def youtube_quality_callback(client: Client, callback_query: types.CallbackQuery
     # Start download with selected quality
     try:
         client.send_chat_action(chat_id, enums.ChatAction.UPLOAD_VIDEO)
-        try:
-            youtube_entrance_with_quality(client, callback_query.message, url, quality)
-        except (CreditsExhaustedException, BandwidthExhaustedException):
-            raise  # Let outer handler deal with limits
-        except Exception as ytdlp_e:
-            # yt-dlp failed — try JDownloader2 as last resort
-            logging.info(
-                "YouTube download failed for %s, trying JDownloader2: %s", url, ytdlp_e
-            )
-            callback_query.message.edit_text("🔧 yt-dlp נכשל, מנסה דרך JDownloader2...")
-            jdownloader_entrance(client, callback_query.message, url)
+        # youtube_entrance_with_quality already falls back to JDownloader2
+        # internally when yt-dlp fails, so we must not retry it here (that
+        # caused JDownloader to be attempted twice). Any final failure is
+        # handled by the outer except blocks below.
+        youtube_entrance_with_quality(client, callback_query.message, url, quality)
     except CreditsExhaustedException:
         # User has no credits - show purchase message with button
         markup = types.InlineKeyboardMarkup(

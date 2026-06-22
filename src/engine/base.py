@@ -529,6 +529,11 @@ class BaseDownloader(ABC):
                 thumb = None
 
         except Exception as e:
+            # Thumbnail generation may fail (e.g. audio-only files have no video
+            # stream for the scale filter). Reset thumb so we never return a path
+            # to a file that was never created — otherwise every upload attempt
+            # fails with "No such file or directory".
+            thumb = None
             err_details = getattr(e, "stderr", b"")
             err_details = err_details.decode("utf-8", "ignore") if isinstance(err_details, bytes) else str(err_details)
             logging.warning("Failed to extract video metadata: %s | Details: %s", e, err_details)
@@ -911,6 +916,10 @@ class BaseDownloader(ABC):
                         # Convert all to string for comparison/removal
                         files = [f for f in files if str(f) != str(video_path)]
                         files.extend(parts)
+
+                        # The split parts are ZIP volumes (.zip.NNN), not playable
+                        # media — force document mode so they upload correctly.
+                        self._format = "document"
 
                         # Continue to normal upload flow (files list updated)
                         continue

@@ -9,12 +9,12 @@ import re
 from contextvars import ContextVar
 from io import StringIO
 
-# Context variable to hold the current request's log buffer
+# Context variable to hold the current request's log buffer.
+# Each worker thread/task carries its own buffer; a single shared handler
+# (registered once below) routes records into whichever buffer is active in
+# the current context.
 _request_buffer: ContextVar[StringIO | None] = ContextVar(
     "request_buffer", default=None
-)
-_request_handler: ContextVar[logging.Handler | None] = ContextVar(
-    "request_handler", default=None
 )
 
 
@@ -31,10 +31,21 @@ class RequestLogHandler(logging.Handler):
                 pass  # Don't let logging errors break the app
 
 
+# Register a single handler on the root logger at import time. This avoids
+# accumulating one handler per request (which caused duplicate log lines and a
+# slow handler leak) — the per-request isolation comes from the ContextVar.
+_shared_handler = RequestLogHandler()
+_shared_handler.setFormatter(
+    logging.Formatter("[%(asctime)s %(levelname)s] %(message)s", datefmt="%H:%M:%S")
+)
+_shared_handler.setLevel(logging.INFO)
+logging.getLogger().addHandler(_shared_handler)
+
+
 def start_request_log(url: str, user_id: int) -> None:
     """
-    Start capturing logs for a new request.
-    Creates a buffer and attaches a handler to the root logger.
+    Start capturing logs for a new request by setting up a fresh buffer in the
+    current context.
 
     Args:
         url: The URL being processed
@@ -43,19 +54,8 @@ def start_request_log(url: str, user_id: int) -> None:
     buf = StringIO()
     _request_buffer.set(buf)
 
-    # Create and configure handler
-    handler = RequestLogHandler()
-    handler.setFormatter(
-        logging.Formatter("[%(asctime)s %(levelname)s] %(message)s", datefmt="%H:%M:%S")
-    )
-    handler.setLevel(logging.INFO)
-
-    # Add handler to root logger
-    logging.getLogger().addHandler(handler)
-    _request_handler.set(handler)
-
     # Write request header
-    buf.write(f"=== Request Start ===\n")
+    buf.write("=== Request Start ===\n")
     buf.write(f"URL: {url}\n")
     buf.write(f"User: {user_id}\n")
     buf.write(f"{'='*20}\n")
@@ -103,16 +103,9 @@ def _redact_sensitive(text: str) -> str:
 
 def end_request_log() -> None:
     """
-    Clean up request log context.
-    Removes the handler from root logger and clears the buffer.
+    Clean up request log context by closing and clearing the current buffer.
+    The shared root-logger handler is intentionally left in place.
     """
-    handler = _request_handler.get()
-    if handler is not None:
-        try:
-            logging.getLogger().removeHandler(handler)
-        except Exception:
-            pass
-
     buf = _request_buffer.get()
     if buf is not None:
         try:
@@ -120,6 +113,5 @@ def end_request_log() -> None:
         except Exception:
             pass
 
-    # Reset context variables
+    # Reset context variable
     _request_buffer.set(None)
-    _request_handler.set(None)

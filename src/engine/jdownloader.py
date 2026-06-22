@@ -320,18 +320,32 @@ class JDownloaderDownload(BaseDownloader):
             # Build caption using the filename as title (no _video_title set for JD downloads)
             import html as _html
 
+            audio_extensions = {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac"}
+            is_audio = primary_file.suffix.lower() in audio_extensions
+
             title = primary_file.stem[: self._title_length]
             duration_minutes = int(meta["duration"]) // 60
             duration_seconds = int(meta["duration"]) % 60
             duration_str = f"{duration_minutes}:{duration_seconds:02d} דקות"
-            meta["caption"] = (
-                f"🎬 <b>{_html.escape(title)}</b>\n\n"
-                f"<blockquote expandable>🔗 מקור: {_html.escape(self._url)}</blockquote>\n"
-                f"📐 רזולוציה: {meta['width']}x{meta['height']}\n"
-                f"⏱️ אורך: {duration_str}\n"
-                f"⬇️ הקובץ מוכן לצפייה והורדה\n"
-                f"צפייה מהנה 👀✨"
-            )
+            if is_audio:
+                # Audio-only file: upload as audio (no resolution/thumbnail).
+                self._format = "audio"
+                meta["caption"] = (
+                    f"🎵 <b>{_html.escape(title)}</b>\n\n"
+                    f"<blockquote expandable>🔗 מקור: {_html.escape(self._url)}</blockquote>\n"
+                    f"⏱️ אורך: {duration_str}\n"
+                    f"⬇️ הקובץ מוכן להורדה\n"
+                    f"שמיעה מהנה 🎧✨"
+                )
+            else:
+                meta["caption"] = (
+                    f"🎬 <b>{_html.escape(title)}</b>\n\n"
+                    f"<blockquote expandable>🔗 מקור: {_html.escape(self._url)}</blockquote>\n"
+                    f"📐 רזולוציה: {meta['width']}x{meta['height']}\n"
+                    f"⏱️ אורך: {duration_str}\n"
+                    f"⬇️ הקובץ מוכן לצפייה והורדה\n"
+                    f"צפייה מהנה 👀✨"
+                )
 
             logging.info(
                 "JDownloader download complete - %d files to upload", len(files)

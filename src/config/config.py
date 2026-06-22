@@ -83,6 +83,17 @@ JDOWNLOADER_DEVICE_NAME = get_env("JDOWNLOADER_DEVICE_NAME")
 JDOWNLOADER_DOWNLOAD_DIR = get_env(
     "JDOWNLOADER_DOWNLOAD_DIR", os.path.join(tempfile.gettempdir(), "jdownloader")
 )
+# Local path to the JDownloader2 executable (used by the admin "launch" button)
+JDOWNLOADER_EXE_PATH = get_env(
+    "JDOWNLOADER_EXE_PATH",
+    os.path.join(
+        os.path.expanduser("~"),
+        "AppData",
+        "Local",
+        "JDownloader 2",
+        "JDownloader2.exe",
+    ),
+)
 
 # JDownloader feature settings
 JDOWNLOADER_POLL_INTERVAL = get_env(

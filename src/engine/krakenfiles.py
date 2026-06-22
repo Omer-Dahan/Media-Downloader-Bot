@@ -6,51 +6,64 @@ from engine.direct import DirectDownload
 
 def krakenfiles_download(client, bot_message, url: str):
     session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+    )
 
-    def _extract_form_data(url: str) -> list[tuple[str, str]]:
+    def _extract_form_data(url: str) -> tuple[str, dict]:
+        """Parse the krakenfiles page and return (post_url, form_data)."""
         try:
-            resp = session.get(url)
+            resp = session.get(url, timeout=30)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.content, "html.parser")
 
-            if post_url := soup.xpath('//form[@id="dl-form"]/@action'):
-                post_url = f"https://krakenfiles.com{post_url[0]}"
-            else:
+            form = soup.find("form", id="dl-form")
+            action = form.get("action") if form else None
+            if not action:
                 raise ValueError("לא נמצא קישור להורדה.")
-            if token := soup.xpath('//input[@id="dl-token"]/@value'):
-                data = {"token": token[0]}
+            # action may be absolute (server subdomain) or relative to the site root
+            if action.startswith("http"):
+                post_url = action
             else:
+                post_url = f"https://krakenfiles.com{action}"
+
+            token_input = soup.find("input", id="dl-token")
+            token = token_input.get("value") if token_input else None
+            if not token:
                 raise ValueError("לא נמצא טוקן להורדה.")
 
-            return list(zip(post_url, data))
+            return post_url, {"token": token}
 
         except requests.RequestException as e:
             raise ValueError(f"נכשל לטעון את הדף: {str(e)}")
+        except ValueError:
+            raise
         except Exception as e:
             raise ValueError(f"נכשל לעבד את הדף: {str(e)}")
 
-    def _get_download_url(form_data: list[tuple[str, str]]) -> str:
-        for post_url, data in form_data:
-            try:
-                response = session.post(post_url, data=data)
-                response.raise_for_status()
+    def _get_download_url(post_url: str, data: dict) -> str:
+        try:
+            response = session.post(post_url, data=data, timeout=30)
+            response.raise_for_status()
 
-                json_data = response.json()
-                if "url" in json_data:
-                    return json_data["url"]
-
-            except requests.RequestException as e:
-                bot_message.edit_text(f"שגיאה בשליחת טופס: {str(e)}")
-            except ValueError as e:
-                bot_message.edit_text(f"שגיאה בעיבוד תגובה: {str(e)}")
+            json_data = response.json()
+            if isinstance(json_data, dict) and json_data.get("url"):
+                return json_data["url"]
+        except requests.RequestException as e:
+            raise ValueError(f"שגיאה בשליחת טופס: {str(e)}")
+        except ValueError as e:
+            raise ValueError(f"שגיאה בעיבוד תגובה: {str(e)}")
 
         raise ValueError("לא ניתן לקבל קישור הורדה")
 
     def _download(url: str):
         try:
             bot_message.edit_text("מעבד את קישור ההורדה...")
-            form_data = _extract_form_data(url)
-            download_url = _get_download_url(form_data)
+            post_url, data = _extract_form_data(url)
+            download_url = _get_download_url(post_url, data)
 
             bot_message.edit_text("מתחיל הורדה...")
             downloader = DirectDownload(client, bot_message, download_url)

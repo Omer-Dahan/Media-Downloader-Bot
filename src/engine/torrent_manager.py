@@ -118,8 +118,11 @@ class TorrentManager:
         global _global_active_count
 
         with _lock:
+            # Only bump the global counter for a genuinely new user slot, otherwise
+            # a duplicate registration would leak the count (and orphan the old hash).
+            if user_id not in _active_torrents:
+                _global_active_count += 1
             _active_torrents[user_id] = torrent_hash
-            _global_active_count += 1
             logging.info(
                 "Registered torrent %s for user %s. Global count: %d",
                 torrent_hash[:8],

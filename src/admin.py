@@ -644,8 +644,10 @@ def handle_run_jdownloader(client: Client, callback_query: types.CallbackQuery):
         callback_query.answer("ℹ️ JDownloader כבר פעיל ברקע.", show_alert=True)
         return
 
-    jd_path = r"C:\Users\omer\AppData\Local\JDownloader 2\JDownloader2.exe"
-    if not os.path.exists(jd_path):
+    from config import JDOWNLOADER_EXE_PATH
+
+    jd_path = JDOWNLOADER_EXE_PATH
+    if not jd_path or not os.path.exists(jd_path):
         callback_query.answer("❌ קובץ ההפעלה של JDownloader לא נמצא בנתיב המוגדר.", show_alert=True)
         return
 

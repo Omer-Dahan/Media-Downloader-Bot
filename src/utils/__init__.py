@@ -157,8 +157,11 @@ def is_youtube(url: str) -> bool:
         return parsed.netloc.lower() in {
             "youtube.com",
             "www.youtube.com",
+            "m.youtube.com",
             "youtu.be",
             "music.youtube.com",
+            "www.youtube-nocookie.com",
+            "youtube-nocookie.com",
         }
 
     except Exception:

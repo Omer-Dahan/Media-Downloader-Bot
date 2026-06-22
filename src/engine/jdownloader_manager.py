@@ -25,6 +25,7 @@ from config import (
     JDOWNLOADER_DEVICE_NAME,
     JDOWNLOADER_DOWNLOAD_DIR,
     JDOWNLOADER_MAX_GLOBAL,
+    JDOWNLOADER_MAX_PER_USER,
 )
 from utils import setup_secure_dir
 
@@ -123,10 +124,13 @@ class JDownloaderManager:
             if _global_active_count >= JDOWNLOADER_MAX_GLOBAL:
                 return False, "השרת עמוס כרגע. נסה שוב בעוד מספר דקות."
 
-            if user_id in _active_downloads and len(_active_downloads[user_id]) >= 3:
+            if (
+                user_id in _active_downloads
+                and len(_active_downloads[user_id]) >= JDOWNLOADER_MAX_PER_USER
+            ):
                 return (
                     False,
-                    "הגעת למגבלת ההורדות המקבילות ב-JDownloader (3 לפחות). המתן לסיומן.",
+                    f"הגעת למגבלת ההורדות המקבילות ב-JDownloader ({JDOWNLOADER_MAX_PER_USER}). המתן לסיומן.",
                 )
 
             return True, ""
