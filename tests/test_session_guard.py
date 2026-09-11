@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
+import pytest
 import pyrogram.errors
 from utils.session_guard import (
     is_fatal_session_error,
@@ -75,6 +76,119 @@ def test_send_http_emergency_alert():
         call_json = mock_post.call_args_list[0][1]["json"]
         assert call_json["chat_id"] == 987654321
         assert "Emergency Alert Test" in call_json["text"]
+
+
+def test_send_http_emergency_alert_nested_and_invalid_targets(caplog):
+    """Verify nested targets are flattened and invalid targets are filtered with warnings."""
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.status_code = 200
+
+        nested_targets = [
+            [111111, 222222],
+            "-1001234567890",
+            None,
+            "",
+            [],
+            0,
+            False,
+            "   ",
+            {"unsupported": "dict"},
+        ]
+
+        result = send_http_emergency_alert(
+            bot_token="123456:TEST",
+            targets=nested_targets,
+            message="🚨 Test Alert",
+        )
+
+        assert result is True
+        # Only valid scalar targets: 111111, 222222, and "-1001234567890"
+        assert mock_post.call_count == 3
+
+        sent_chat_ids = [call[1]["json"]["chat_id"] for call in mock_post.call_args_list]
+        assert sent_chat_ids == [111111, 222222, "-1001234567890"]
+
+        # Ensure no list or invalid object was passed as chat_id
+        for chat_id in sent_chat_ids:
+            assert isinstance(chat_id, (int, str))
+            assert not isinstance(chat_id, (list, tuple, dict, set, bool))
+
+        # Check that warnings were logged for invalid targets
+        assert any("Skipping invalid alert target" in record.message for record in caplog.records)
+
+
+def test_send_http_emergency_alert_all_invalid():
+    """Verify function returns False and does not make HTTP calls when all targets are invalid."""
+    with patch("requests.post") as mock_post:
+        result = send_http_emergency_alert(
+            bot_token="123456:TEST",
+            targets=[None, "", [], 0, False],
+            message="🚨 Test Alert",
+        )
+        assert result is False
+        assert mock_post.call_count == 0
+
+
+def test_main_call_site_integration_emergency_alert():
+    """Simulate the actual call site in main.py with OWNER as list and ARCHIVE_CHANNEL.
+
+    Verifies each target receives a separate HTTP request with a scalar chat_id.
+    """
+    mock_owner = [111111, 222222]
+    mock_archive = -1003333333333
+
+    # Pattern used in main.py:
+    resolved_targets = [t for t in [*mock_owner, mock_archive] if t]
+
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.status_code = 200
+
+        result = send_http_emergency_alert(
+            bot_token="token_xyz",
+            targets=resolved_targets,
+            message="🚨 Alert from main",
+        )
+
+        assert result is True
+        assert mock_post.call_count == 3
+        sent_ids = [call[1]["json"]["chat_id"] for call in mock_post.call_args_list]
+        assert sent_ids == [111111, 222222, -1003333333333]
+        for cid in sent_ids:
+            assert isinstance(cid, int)
+
+    # When ARCHIVE_CHANNEL is None:
+    resolved_without_archive = [t for t in [*mock_owner, None] if t]
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.status_code = 200
+
+        result = send_http_emergency_alert(
+            bot_token="token_xyz",
+            targets=resolved_without_archive,
+            message="🚨 Alert from main without archive",
+        )
+
+        assert result is True
+        assert mock_post.call_count == 2
+        sent_ids = [call[1]["json"]["chat_id"] for call in mock_post.call_args_list]
+        assert sent_ids == [111111, 222222]
+
+    # Even if unflattened list is passed directly to handle_fatal_session_error:
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.status_code = 200
+        exc = pyrogram.errors.AuthKeyDuplicated(value="[406 AUTH_KEY_DUPLICATED]")
+
+        handle_fatal_session_error(
+            exc=exc,
+            session_name="dummy",
+            bot_token="token_xyz",
+            alert_targets=[mock_owner, mock_archive],  # Nested list test
+            workdir="/tmp",
+            exit_process=False,
+        )
+
+        assert mock_post.call_count == 3
+        sent_ids = [call[1]["json"]["chat_id"] for call in mock_post.call_args_list]
+        assert sent_ids == [111111, 222222, -1003333333333]
 
 
 def test_handle_fatal_session_error(tmp_path):

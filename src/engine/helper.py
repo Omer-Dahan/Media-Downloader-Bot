@@ -32,13 +32,7 @@ def debounce(wait_seconds):
     return decorator
 
 
-def sizeof_fmt(num: int, suffix="B"):
-    """Format file size in human-readable format."""
-    for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
-        if abs(num) < 1024.0:
-            return "%3.1f%s%s" % (num, unit, suffix)
-        num /= 1024.0
-    return "%.1f%s%s" % (num, "Yi", suffix)
+from utils.formatters import sizeof_fmt
 
 
 def moon_progress_bar(percent: float, total_cells: int = 10) -> str:

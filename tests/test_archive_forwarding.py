@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pyrogram import enums, types
 from config.config import _parse_channel_id
 from engine.base import BaseDownloader
 
@@ -131,3 +132,141 @@ def test_forward_to_archive_handles_split_parts_list():
         call2_kwargs = client.copy_message.call_args_list[1].kwargs
         assert call1_kwargs["message_id"] == 101
         assert call2_kwargs["message_id"] == 102
+
+
+def test_forward_to_archive_media_group():
+    """Verify that media groups (albums) are forwarded using send_media_group."""
+    client = MagicMock()
+    bot_msg = MagicMock()
+    bot_msg.chat.id = 12345
+    bot_msg.chat.type = "private"
+    bot_msg.id = 100
+
+    downloader = DummyDownloader(client, bot_msg, "https://example.com/album")
+
+    photo_msg = SimpleNamespace(
+        id=201,
+        media_group_id="album_123",
+        photo=SimpleNamespace(file_id="photo_fid_1"),
+        video=None,
+        document=None,
+        audio=None,
+    )
+    video_msg = SimpleNamespace(
+        id=202,
+        media_group_id="album_123",
+        photo=None,
+        video=SimpleNamespace(
+            file_id="video_fid_2",
+            duration=45,
+            width=1920,
+            height=1080,
+        ),
+        document=None,
+        audio=None,
+    )
+    doc_msg = SimpleNamespace(
+        id=203,
+        media_group_id="album_123",
+        photo=None,
+        video=None,
+        document=SimpleNamespace(file_id="doc_fid_3"),
+        audio=None,
+    )
+    audio_msg = SimpleNamespace(
+        id=204,
+        media_group_id="album_123",
+        photo=None,
+        video=None,
+        document=None,
+        audio=SimpleNamespace(
+            file_id="audio_fid_4",
+            duration=150,
+            performer="Band",
+            title="Song",
+        ),
+    )
+
+    with patch("engine.base.ARCHIVE_CHANNEL", -100999999):
+        downloader._forward_to_archive(
+            success=[photo_msg, video_msg, doc_msg, audio_msg],
+            files=["/tmp/1.jpg", "/tmp/2.mp4", "/tmp/3.pdf", "/tmp/4.mp3"],
+        )
+
+        client.copy_message.assert_not_called()
+        client.send_media_group.assert_called_once()
+
+        call_kwargs = client.send_media_group.call_args.kwargs
+        assert call_kwargs["chat_id"] == -100999999
+
+        media_list = call_kwargs["media"]
+        assert len(media_list) == 4
+
+        # 1. Photo
+        assert isinstance(media_list[0], types.InputMediaPhoto)
+        assert media_list[0].media == "photo_fid_1"
+
+        # 2. Video
+        assert isinstance(media_list[1], types.InputMediaVideo)
+        assert media_list[1].media == "video_fid_2"
+        assert media_list[1].duration == 45
+        assert media_list[1].width == 1920
+        assert media_list[1].height == 1080
+        assert media_list[1].supports_streaming is True
+
+        # 3. Document
+        assert isinstance(media_list[2], types.InputMediaDocument)
+        assert media_list[2].media == "doc_fid_3"
+
+        # 4. Audio
+        assert isinstance(media_list[3], types.InputMediaAudio)
+        assert media_list[3].media == "audio_fid_4"
+        assert media_list[3].duration == 150
+        assert media_list[3].performer == "Band"
+        assert media_list[3].title == "Song"
+
+        # Last item in album must carry the archive caption and parse_mode
+        assert media_list[-1].caption is not None
+        assert "album" in media_list[-1].caption or "משתמש" in media_list[-1].caption
+        assert media_list[-1].parse_mode == enums.ParseMode.HTML
+
+
+def test_forward_to_archive_media_group_handles_channel_error_gracefully(caplog):
+    """Verify that send_media_group errors (like CHAT_ADMIN_REQUIRED) do not raise."""
+    client = MagicMock()
+    client.send_media_group.side_effect = Exception(
+        "Telegram says: [400 CHAT_ADMIN_REQUIRED] - Chat admin privileges required."
+    )
+
+    bot_msg = MagicMock()
+    bot_msg.chat.id = 12345
+    bot_msg.chat.type = "private"
+    bot_msg.id = 100
+
+    downloader = DummyDownloader(client, bot_msg, "https://example.com/album")
+
+    photo_msg1 = SimpleNamespace(
+        id=201,
+        media_group_id="album_999",
+        photo=SimpleNamespace(file_id="p1"),
+        video=None,
+        document=None,
+        audio=None,
+    )
+    photo_msg2 = SimpleNamespace(
+        id=202,
+        media_group_id="album_999",
+        photo=SimpleNamespace(file_id="p2"),
+        video=None,
+        document=None,
+        audio=None,
+    )
+
+    with patch("engine.base.ARCHIVE_CHANNEL", -100999999):
+        # Should not raise
+        downloader._forward_to_archive(
+            success=[photo_msg1, photo_msg2],
+            files=["/tmp/1.jpg", "/tmp/2.jpg"],
+        )
+
+    assert any("Archive channel (-100999999) is not accessible" in record.message for record in caplog.records)

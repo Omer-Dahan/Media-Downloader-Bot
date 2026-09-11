@@ -3,8 +3,9 @@
 import html
 import logging
 import os
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import requests
 import pyrogram.errors
@@ -75,9 +76,24 @@ def remove_invalidated_session(
     return removed
 
 
+def _flatten_targets(raw_targets: Any) -> list[Any]:
+    """Recursively flatten nested iterables (lists, tuples, sets), ignoring strings, bytes, and mappings."""
+    flat = []
+    if raw_targets is None:
+        return flat
+    if isinstance(raw_targets, (str, bytes, Mapping)):
+        return [raw_targets]
+    if isinstance(raw_targets, Iterable):
+        for item in raw_targets:
+            flat.extend(_flatten_targets(item))
+    else:
+        flat.append(raw_targets)
+    return flat
+
+
 def send_http_emergency_alert(
     bot_token: Optional[str],
-    targets: Sequence[int | str | None],
+    targets: Any,
     message: str,
 ) -> bool:
     """Send an emergency alert via HTTP Telegram Bot API when MTProto is down.
@@ -89,12 +105,43 @@ def send_http_emergency_alert(
         logging.warning("No BOT_TOKEN available to send HTTP emergency alert.")
         return False
 
+    valid_targets: list[int | str] = []
+    seen: set[Any] = set()
+
+    for item in _flatten_targets(targets):
+        if item is None or isinstance(item, bool):
+            logging.warning("Skipping invalid alert target: %r", item)
+            continue
+        if isinstance(item, int):
+            if item == 0:
+                logging.warning("Skipping invalid alert target (0): %r", item)
+                continue
+            if item not in seen:
+                seen.add(item)
+                valid_targets.append(item)
+        elif isinstance(item, str):
+            val = item.strip()
+            if not val:
+                logging.warning("Skipping invalid alert target (empty string): %r", item)
+                continue
+            if val not in seen:
+                seen.add(val)
+                valid_targets.append(val)
+        else:
+            logging.warning(
+                "Skipping invalid alert target (unsupported type %s): %r",
+                type(item).__name__,
+                item,
+            )
+
+    if not valid_targets:
+        logging.warning("No valid alert targets available to send HTTP emergency alert.")
+        return False
+
     success = False
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
-    for target in targets:
-        if not target:
-            continue
+    for target in valid_targets:
         try:
             resp = requests.post(
                 url,
@@ -125,7 +172,7 @@ def handle_fatal_session_error(
     exc: BaseException,
     session_name: str = "main",
     bot_token: Optional[str] = None,
-    alert_targets: Optional[Sequence[int | str | None]] = None,
+    alert_targets: Any = None,
     workdir: str | Path = ".",
     exit_process: bool = True,
 ) -> None:
@@ -170,7 +217,7 @@ def setup_asyncio_exception_handler(
     loop,
     session_name: str = "main",
     bot_token: Optional[str] = None,
-    alert_targets: Optional[Sequence[int | str | None]] = None,
+    alert_targets: Any = None,
     workdir: str | Path = ".",
 ) -> None:
     """Set custom exception handler on asyncio event loop to catch unhandled task exceptions

@@ -7,13 +7,7 @@ from urllib.parse import urlparse
 
 import psutil
 
-def sizeof_fmt(num: int, suffix="B"):
-    """Format file size in human-readable format."""
-    for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
-        if abs(num) < 1024.0:
-            return "%3.1f%s%s" % (num, unit, suffix)
-        num /= 1024.0
-    return "%.1f%s%s" % (num, "Yi", suffix)
+from utils.formatters import sizeof_fmt
 
 
 def setup_secure_dir(path: str) -> None:

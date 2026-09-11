@@ -1226,7 +1226,7 @@ By @BennyThink, VIP Mode: {ENABLE_VIP}
         app.loop,
         session_name="main",
         bot_token=BOT_TOKEN,
-        alert_targets=[OWNER, ARCHIVE_CHANNEL],
+        alert_targets=[t for t in [*OWNER, ARCHIVE_CHANNEL] if t],
     )
 
     # Warm up and verify archive channel access on startup
@@ -1259,7 +1259,7 @@ By @BennyThink, VIP Mode: {ENABLE_VIP}
                 e,
                 session_name="main",
                 bot_token=BOT_TOKEN,
-                alert_targets=[OWNER, ARCHIVE_CHANNEL],
+                alert_targets=[t for t in [*OWNER, ARCHIVE_CHANNEL] if t],
             )
         else:
             raise
