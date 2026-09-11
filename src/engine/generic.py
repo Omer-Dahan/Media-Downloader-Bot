@@ -247,6 +247,12 @@ def restart_bot():
     """Restart the bot process."""
     logging.info("Restarting bot process...")
     try:
+        from utils.process_lock import release_process_lock
+
+        release_process_lock()
+    except Exception:
+        pass
+    try:
         # Use os.execv to replace the current process with a new one
         os.execv(sys.executable, [sys.executable] + sys.argv)
     except Exception as e:

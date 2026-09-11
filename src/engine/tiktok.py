@@ -415,28 +415,15 @@ class TikTokDownload(BaseDownloader):
                     else ""
                 )
                 self._bot_msg.edit_text(f"✅ הושלם בהצלחה{remaining_text}")
+                # Forward slideshow to archive if configured
+                if ARCHIVE_CHANNEL:
+                    self._forward_to_archive(
+                        success, downloaded_files, custom_caption=self._get_archive_caption(downloaded_files)
+                    )
             else:
                 self._bot_msg.edit_text("❌ שליחת התמונות נכשלה")
 
         else:
-            # Regular video upload
-            files = [Path(f) for f in downloaded_files]
+            # Regular video upload - _upload automatically invokes _forward_to_archive with custom caption
             meta = self.get_metadata()
-            success = self._upload(files=downloaded_files, meta=meta, skip_archive=True)
-
-        # Custom archive handling for TikTok with both URLs
-        if ARCHIVE_CHANNEL and success:
-            try:
-                msg_id = getattr(success, "id", None)
-                archive_caption = self._get_archive_caption(downloaded_files)
-
-                logging.info("TikTok: Copying to archive with custom caption")
-                self._client.copy_message(
-                    chat_id=ARCHIVE_CHANNEL,
-                    from_chat_id=self._chat_id,
-                    message_id=msg_id,
-                    caption=archive_caption,
-                )
-                logging.info("TikTok: Forwarded to archive channel")
-            except Exception as e:
-                logging.error("TikTok: Failed to forward to archive: %s", e)
+            self._upload(files=downloaded_files, meta=meta)

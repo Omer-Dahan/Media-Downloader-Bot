@@ -282,22 +282,5 @@ class InstagramDownload(BaseDownloader):
             return
 
         meta = self.get_metadata()
-
-        success = self._upload(files=downloaded_files, meta=meta, skip_archive=True)
-
-        # Custom archive handling for Instagram
-        if ARCHIVE_CHANNEL and success:
-            try:
-                msg_id = getattr(success, "id", None)
-                archive_caption = self._get_archive_caption(downloaded_files)
-
-                logging.info("Instagram: Copying to archive with custom caption")
-                self._client.copy_message(
-                    chat_id=ARCHIVE_CHANNEL,
-                    from_chat_id=self._chat_id,
-                    message_id=msg_id,
-                    caption=archive_caption,
-                )
-                logging.info("Instagram: Forwarded to archive channel")
-            except Exception as e:
-                logging.error("Instagram: Failed to forward to archive: %s", e)
+        # _upload automatically calls _forward_to_archive with _get_archive_caption
+        self._upload(files=downloaded_files, meta=meta)

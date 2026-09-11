@@ -422,7 +422,7 @@ class BaseDownloader(ABC):
                 "scale",
                 "if(gt(iw,ih),300,-1)",  # If width > height, scale width to 320 and height auto
                 "if(gt(iw,ih),-1,300)",
-            ).output(thumb, vframes=1).run()
+            ).output(thumb, vframes=1, update=1).run(quiet=True, overwrite_output=True)
             # Verify thumbnail was created and is valid (at least 100 bytes)
             if not thumb_path.exists() or thumb_path.stat().st_size < 100:
                 logging.warning(
@@ -521,7 +521,7 @@ class BaseDownloader(ABC):
             (
                 ffmpeg.input(str(video_path), ss=duration / 2)
                 .filter("scale", "if(gt(iw,ih),300,-1)", "if(gt(iw,ih),-1,300)")
-                .output(thumb, vframes=1)
+                .output(thumb, vframes=1, update=1)
                 .run(quiet=True, overwrite_output=True)
             )
 
@@ -540,7 +540,9 @@ class BaseDownloader(ABC):
 
         return {"duration": duration, "width": width, "height": height, "thumb": thumb}
 
-    def _forward_to_archive(self, success, files, skip_archive=False):
+    def _forward_to_archive(
+        self, success, files, skip_archive=False, custom_caption=None
+    ):
         """Forward success message to archive channel."""
         from config import CAPTION_URL_LENGTH_LIMIT
         import html
@@ -549,41 +551,42 @@ class BaseDownloader(ABC):
             return
 
         try:
+            from engine.helper import get_user_display_name
+
+            user_display = get_user_display_name(self._from_user)
+
             if isinstance(success, list):
                 if not success:
                     return
-                msg_id = success[0].id
+                msg_id = getattr(success[0], "id", None)
                 media_group_id = getattr(success[0], "media_group_id", None)
             else:
                 msg_id = getattr(success, "id", None)
                 media_group_id = getattr(success, "media_group_id", None)
 
-            # Get user info
-            from engine.helper import get_user_display_name
+            if custom_caption is not None:
+                archive_caption = custom_caption
+            elif hasattr(self, "_get_archive_caption"):
+                archive_caption = self._get_archive_caption(files)
+            else:
+                filename = "Unknown"
+                if files and len(files) > 0:
+                    filename = Path(files[0]).name
 
-            user_display = get_user_display_name(self._from_user)
+                display_url = self._url
+                if len(display_url) > CAPTION_URL_LENGTH_LIMIT:
+                    display_url = display_url[:CAPTION_URL_LENGTH_LIMIT] + "..."
 
-            # Get filename
-            filename = "Unknown"
-            if files and len(files) > 0:
-                filename = Path(files[0]).name
+                display_filename = filename
+                if len(display_filename) > 200:
+                    display_filename = display_filename[:200] + "..."
 
-            # Truncate things for caption
-            display_url = self._url
-            if len(display_url) > CAPTION_URL_LENGTH_LIMIT:
-                display_url = display_url[:CAPTION_URL_LENGTH_LIMIT] + "..."
-
-            display_filename = filename
-            if len(display_filename) > 200:
-                display_filename = display_filename[:200] + "..."
-
-            # Create archive caption
-            archive_caption = (
-                f"👤 משתמש: {html.escape(user_display)}\n"
-                f"🆔 {self._from_user}\n"
-                f"📁 קובץ: {html.escape(display_filename)}\n"
-                f"<blockquote expandable>🔗 קישור: {html.escape(display_url)}</blockquote>"
-            )
+                archive_caption = (
+                    f"👤 משתמש: {html.escape(user_display)}\n"
+                    f"🆔 {self._from_user}\n"
+                    f"📁 קובץ: {html.escape(display_filename)}\n"
+                    f"<blockquote expandable>🔗 קישור: {html.escape(display_url)}</blockquote>"
+                )
 
             if media_group_id and isinstance(success, list):
                 logging.info(
@@ -591,7 +594,6 @@ class BaseDownloader(ABC):
                 )
                 archive_inputs = []
                 for msg in success:
-                    # Extract file_id and type from the sent message
                     if msg.photo:
                         media = types.InputMediaPhoto(media=msg.photo.file_id)
                     elif msg.video:
@@ -617,7 +619,6 @@ class BaseDownloader(ABC):
                     archive_inputs.append(media)
 
                 if archive_inputs:
-                    # Set caption on the last item
                     archive_inputs[-1].caption = archive_caption
                     archive_inputs[-1].parse_mode = enums.ParseMode.HTML
                     self._client.send_media_group(
@@ -625,21 +626,15 @@ class BaseDownloader(ABC):
                     )
 
             elif isinstance(success, list):
-                # List of separate messages (e.g. split archive parts) - copy each
                 logging.info("Copying %d split parts to archive channel", len(success))
                 for msg in success:
-                    # Combine archive user info with the part's caption
                     part_caption = msg.caption or ""
-
-                    # Create minimal header
                     header = (
                         f"👤 משתמש: {user_display}\n"
                         f"🆔 {self._from_user}\n"
                         f"**>🔗 קישור: {self._url}**"
                     )
-
                     final_caption = f"{header}\n{part_caption}"
-
                     self._client.copy_message(
                         chat_id=ARCHIVE_CHANNEL,
                         from_chat_id=self._chat_id,
@@ -648,7 +643,6 @@ class BaseDownloader(ABC):
                         parse_mode=enums.ParseMode.HTML,
                     )
             else:
-                # Single file - copy message with new caption
                 self._client.copy_message(
                     chat_id=ARCHIVE_CHANNEL,
                     from_chat_id=self._chat_id,
@@ -660,7 +654,15 @@ class BaseDownloader(ABC):
             logging.info("Forwarded to archive channel: %s", ARCHIVE_CHANNEL)
 
         except Exception as e:
-            logging.error("Failed to forward to archive channel: %s", e)
+            if "CHANNEL_INVALID" in str(e) or "CHANNEL_PRIVATE" in str(e) or "CHAT_ADMIN_REQUIRED" in str(e):
+                logging.warning(
+                    "Archive channel (%s) is not accessible by the bot: %s. "
+                    "Make sure the bot is an administrator in the channel.",
+                    ARCHIVE_CHANNEL,
+                    e,
+                )
+            else:
+                logging.error("Failed to forward to archive channel: %s", e)
 
     def _split_video_if_needed(self, video_path: Path) -> list[Path]:
         """Split video into ~1.9GB parts if larger than Telegram limit.

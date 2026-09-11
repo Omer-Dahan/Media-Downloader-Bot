@@ -100,13 +100,16 @@ class Payment(Base):
 
 
 def create_session():
-    engine = create_engine(
-        os.getenv("DB_DSN"),
-        pool_size=50,
-        max_overflow=100,
-        pool_timeout=30,
-        pool_recycle=1800,
-    )
+    db_dsn = os.getenv("DB_DSN") or "sqlite:///database.sqlite3"
+    kwargs = {}
+    if not db_dsn.startswith("sqlite"):
+        kwargs = {
+            "pool_size": 50,
+            "max_overflow": 100,
+            "pool_timeout": 30,
+            "pool_recycle": 1800,
+        }
+    engine = create_engine(db_dsn, **kwargs)
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)
 

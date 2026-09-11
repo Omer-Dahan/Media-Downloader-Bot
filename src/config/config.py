@@ -21,7 +21,8 @@ WORKERS: int = get_env("WORKERS", 100)
 APP_ID: int = get_env("APP_ID")
 APP_HASH = get_env("APP_HASH")
 BOT_TOKEN = get_env("BOT_TOKEN")
-OWNER = [int(i) for i in str(get_env("OWNER")).split(",")]
+_raw_owner = get_env("OWNER")
+OWNER = [int(i.strip()) for i in str(_raw_owner).split(",") if i.strip().isdigit()] if _raw_owner else []
 # db settings
 AUTHORIZED_USER: str = get_env("AUTHORIZED_USER", "")
 DB_DSN = get_env("DB_DSN")
@@ -37,9 +38,17 @@ PROVIDER_TOKEN = get_env("PROVIDER_TOKEN")
 FREE_DOWNLOAD = get_env("FREE_DOWNLOAD", 3)
 TOKEN_PRICE = get_env("TOKEN_PRICE", 10)  # 1 USD=10 downloads
 FREE_BANDWIDTH = get_env("FREE_BANDWIDTH", 2147483648)  # 2GB in bytes
-ARCHIVE_CHANNEL = (
-    int(get_env("ARCHIVE_CHANNEL")) if get_env("ARCHIVE_CHANNEL") else None
-)  # Channel to forward downloads to
+def _parse_channel_id(val):
+    if not val:
+        return None
+    val = str(val).strip()
+    try:
+        return int(val)
+    except ValueError:
+        return val
+
+
+ARCHIVE_CHANNEL = _parse_channel_id(get_env("ARCHIVE_CHANNEL"))  # Channel to forward downloads to (int ID or str username)
 
 
 # For advance users

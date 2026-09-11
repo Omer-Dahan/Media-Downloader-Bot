@@ -65,7 +65,16 @@ from engine import (
 from engine.base import cancellation_events, _resume_state_cache
 from engine.concurrency import concurrency_manager
 from engine.generic import check_and_send_update_notification, auto_update_ytdlp
-from utils import extract_url_and_name, is_youtube, format_system_stats
+from utils import (
+    extract_url_and_name,
+    is_youtube,
+    format_system_stats,
+    acquire_process_lock,
+    release_process_lock,
+    is_fatal_session_error,
+    handle_fatal_session_error,
+    setup_asyncio_exception_handler,
+)
 from admin import (
     admin_panel_command,
     admin_callback_handler,
@@ -1155,41 +1164,9 @@ def resume_callback(client: Client, callback_query: types.CallbackQuery):
 
 
 if __name__ == "__main__":
-    # === Prevent duplicate instances ===
-    _LOCKFILE = os.path.join(os.path.dirname(__file__), ".bot.pid")
-
-    def _kill_old_instance():
-        """Kill any previous bot instance that's still running."""
-        if not os.path.exists(_LOCKFILE):
-            return
-        try:
-            old_pid = int(open(_LOCKFILE).read().strip())
-            if old_pid == os.getpid():
-                return
-            old_proc = psutil.Process(old_pid)
-            # Verify it's actually our bot (not some other process reusing the PID)
-            cmdline = " ".join(old_proc.cmdline())
-            if "main.py" in cmdline:
-                logging.warning(
-                    "⚠️ Killing old bot instance (PID %d) to prevent database lock",
-                    old_pid,
-                )
-                # Kill children first (sub-processes)
-                for child in old_proc.children(recursive=True):
-                    child.kill()
-                old_proc.kill()
-                old_proc.wait(timeout=5)
-                logging.info("✅ Old instance killed successfully")
-        except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
-            pass  # Process already gone or can't access
-        except Exception as e:
-            logging.warning("Could not kill old instance: %s", e)
-
-    _kill_old_instance()
-
-    # Write our PID
-    with open(_LOCKFILE, "w") as f:
-        f.write(str(os.getpid()))
+    # === Prevent duplicate instances using exclusive OS advisory file lock ===
+    if not acquire_process_lock():
+        sys.exit(1)
 
     botStartTime = time.time()
     scheduler = BackgroundScheduler()
@@ -1243,6 +1220,48 @@ By @BennyThink, VIP Mode: {ENABLE_VIP}
         except Exception as e:
             logging.warning("⚠️ JDownloader2 check failed: %s", e)
 
+    # Install exception handler on asyncio event loop to catch fatal session errors
+    # (such as Session.restart() raising AuthKeyDuplicated in background task)
+    setup_asyncio_exception_handler(
+        app.loop,
+        session_name="main",
+        bot_token=BOT_TOKEN,
+        alert_targets=[OWNER, ARCHIVE_CHANNEL],
+    )
+
+    # Warm up and verify archive channel access on startup
+    def verify_archive_channel():
+        time.sleep(3)
+        if ARCHIVE_CHANNEL:
+            try:
+                chat = app.get_chat(ARCHIVE_CHANNEL)
+                logging.info(
+                    "✅ Archive channel verified: %s (%s)",
+                    getattr(chat, "title", "Archive"),
+                    ARCHIVE_CHANNEL,
+                )
+            except Exception as e:
+                logging.warning(
+                    "⚠️ Archive channel (%s) access check failed: %s. "
+                    "Make sure the bot is an administrator in the channel.",
+                    ARCHIVE_CHANNEL,
+                    e,
+                )
+
+    threading.Thread(target=verify_archive_channel, daemon=True).start()
     threading.Thread(target=send_update_notification_on_startup, daemon=True).start()
 
-    app.run()
+    try:
+        app.run()
+    except Exception as e:
+        if is_fatal_session_error(e):
+            handle_fatal_session_error(
+                e,
+                session_name="main",
+                bot_token=BOT_TOKEN,
+                alert_targets=[OWNER, ARCHIVE_CHANNEL],
+            )
+        else:
+            raise
+    finally:
+        release_process_lock()

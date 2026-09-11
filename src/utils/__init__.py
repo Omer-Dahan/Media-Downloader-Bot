@@ -7,7 +7,13 @@ from urllib.parse import urlparse
 
 import psutil
 
-from engine.helper import sizeof_fmt
+def sizeof_fmt(num: int, suffix="B"):
+    """Format file size in human-readable format."""
+    for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
+        if abs(num) < 1024.0:
+            return "%3.1f%s%s" % (num, unit, suffix)
+        num /= 1024.0
+    return "%.1f%s%s" % (num, "Yi", suffix)
 
 
 def setup_secure_dir(path: str) -> None:
@@ -183,3 +189,12 @@ def extract_url_and_name(message_text):
     new_name = name_match.group(1) if name_match else None
 
     return url, new_name
+
+from utils.process_lock import acquire_process_lock, release_process_lock
+from utils.session_guard import (
+    is_fatal_session_error,
+    remove_invalidated_session,
+    send_http_emergency_alert,
+    handle_fatal_session_error,
+    setup_asyncio_exception_handler,
+)

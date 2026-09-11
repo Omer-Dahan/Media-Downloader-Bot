@@ -3,7 +3,12 @@ import pathlib
 import requests
 import yt_dlp
 
-from RedDownloader import RedDownloader as RD
+try:
+    from RedDownloader import RedDownloader as RD
+    REDDOWNLOADER_AVAILABLE = True
+except ImportError:
+    RD = None
+    REDDOWNLOADER_AVAILABLE = False
 from engine.base import BaseDownloader
 from engine.helper import extract_metadata_from_info
 
@@ -86,6 +91,8 @@ class RedditDownload(BaseDownloader):
 
         # Try RedDownloader first
         try:
+            if not REDDOWNLOADER_AVAILABLE or RD is None:
+                raise ImportError("RedDownloader not available")
             downloader = RD.Download(
                 url=url,
                 output="reddit_media",
