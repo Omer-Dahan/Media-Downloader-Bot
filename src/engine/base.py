@@ -34,6 +34,7 @@ from database.model import (
 )
 from engine.helper import sizeof_fmt, safe_truncate, create_telegraph_page
 from engine.network_errors import format_network_error_message
+from utils.shutdown import is_shutting_down
 
 cancellation_events = set()
 _cancellation_lock = threading.Lock()
@@ -218,6 +219,8 @@ class BaseDownloader(ABC):
         self.edit_text(text)
 
     def check_for_cancel(self):
+        if is_shutting_down():
+            raise ValueError("ההורדה בוטלה עקב כיבוי השרת 🛑")
         key = f"{self._chat_id}_{self._id}"
         with _cancellation_lock:
             if key in cancellation_events:
@@ -225,6 +228,8 @@ class BaseDownloader(ABC):
                 raise ValueError("ההורדה בוטלה על ידי המשתמש 🛑")
 
     def edit_text(self, text: str):
+        if is_shutting_down():
+            return
         # Rate limit to avoid "Waiting for..." spam from Pyrogram
         import time
 
@@ -672,6 +677,7 @@ class BaseDownloader(ABC):
         import math
         import subprocess
 
+        self.check_for_cancel()
         file_size = video_path.stat().st_size
         if file_size <= TG_NORMAL_MAX_SIZE:
             return [video_path]
@@ -703,6 +709,7 @@ class BaseDownloader(ABC):
 
         parts = []
         for i in range(num_parts):
+            self.check_for_cancel()
             start_time = i * part_duration
             output_path = (
                 video_path.parent / f"{video_path.stem}_part{i+1}{video_path.suffix}"

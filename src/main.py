@@ -74,6 +74,8 @@ from utils import (
     is_fatal_session_error,
     handle_fatal_session_error,
     setup_asyncio_exception_handler,
+    shutdown_manager,
+    is_shutting_down,
 )
 from admin import (
     admin_panel_command,
@@ -703,16 +705,18 @@ def download_handler(client: Client, message: types.Message):
     except BandwidthExhaustedException as e:
         message.reply_text(str(e), quote=True)
     except ValueError as e:
-        report_error_to_archive(client, message.from_user, url, e)
-        message.reply_text(str(e), quote=True)
+        if not is_shutting_down():
+            report_error_to_archive(client, message.from_user, url, e)
+            message.reply_text(str(e), quote=True)
     except Exception as e:
-        report_error_to_archive(client, message.from_user, url, e)
-        logging.error("Download failed", exc_info=True)
-        message.reply_text(
-            "❌ לא הצלחתי להוריד את הקישור הזה כרגע.\n"
-            "נסה שוב עוד מעט או שלח קישור אחר.",
-            quote=True,
-        )
+        if not is_shutting_down():
+            report_error_to_archive(client, message.from_user, url, e)
+            logging.error("Download failed", exc_info=True)
+            message.reply_text(
+                "❌ לא הצלחתי להוריד את הקישור הזה כרגע.\n"
+                "נסה שוב עוד מעט או שלח קישור אחר.",
+                quote=True,
+            )
     finally:
         end_request_log()
         # Release the concurrency slot. For the YouTube menu path this is correct
@@ -795,13 +799,15 @@ def torrent_file_handler(client: Client, message: types.Message):
         torrent_entrance(client, bot_msg, f"torrent:{file_name}", tmp_path)
 
     except ValueError as e:
-        report_error_to_archive(client, message.from_user, file_name, e)
+        if not is_shutting_down():
+            report_error_to_archive(client, message.from_user, file_name, e)
     except Exception as e:
-        report_error_to_archive(client, message.from_user, file_name, e)
-        logging.error("Torrent file handling failed", exc_info=True)
-        bot_msg.edit_text(
-            "❌ לא הצלחתי לעבד את קובץ הטורנט.\n" "ודא שהקובץ תקין ונסה שוב."
-        )
+        if not is_shutting_down():
+            report_error_to_archive(client, message.from_user, file_name, e)
+            logging.error("Torrent file handling failed", exc_info=True)
+            bot_msg.edit_text(
+                "❌ לא הצלחתי לעבד את קובץ הטורנט.\n" "ודא שהקובץ תקין ונסה שוב."
+            )
     finally:
         end_request_log()
         concurrency_manager.release(chat_id)
@@ -1065,14 +1071,15 @@ def youtube_quality_callback(client: Client, callback_query: types.CallbackQuery
     except BandwidthExhaustedException as e:
         callback_query.message.edit_text(str(e))
     except Exception as e:
-        # Get user for error reporting
-        user = callback_query.from_user
-        report_error_to_archive(client, user, url, e)
-        logging.error("Download failed", exc_info=True)
-        callback_query.message.edit_text(
-            "❌ לא הצלחתי להוריד את הקישור הזה כרגע.\n"
-            "נסה שוב עוד מעט או שלח קישור אחר."
-        )
+        if not is_shutting_down():
+            # Get user for error reporting
+            user = callback_query.from_user
+            report_error_to_archive(client, user, url, e)
+            logging.error("Download failed", exc_info=True)
+            callback_query.message.edit_text(
+                "❌ לא הצלחתי להוריד את הקישור הזה כרגע.\n"
+                "נסה שוב עוד מעט או שלח קישור אחר."
+            )
     finally:
         end_request_log()
         concurrency_manager.release(chat_id)
@@ -1152,12 +1159,14 @@ def resume_callback(client: Client, callback_query: types.CallbackQuery):
                 if "לא נמצא מוריד" in str(inner_e):
                     youtube_entrance(client, callback_query.message, url)
     except Exception as e:
-        user = callback_query.from_user
-        report_error_to_archive(client, user, url, e)
-        logging.error("Resume download failed", exc_info=True)
-        callback_query.message.edit_text(
-            "❌ לא הצלחתי להמשיך את ההורדה כרגע.\n" "נסה שוב עוד מעט או שלח קישור אחר."
-        )
+        if not is_shutting_down():
+            user = callback_query.from_user
+            report_error_to_archive(client, user, url, e)
+            logging.error("Resume download failed", exc_info=True)
+            callback_query.message.edit_text(
+                "❌ לא הצלחתי להמשיך את ההורדה כרגע.\n"
+                "נסה שוב עוד מעט או שלח קישור אחר."
+            )
     finally:
         end_request_log()
         concurrency_manager.release(chat_id)
@@ -1173,6 +1182,10 @@ if __name__ == "__main__":
     # Daily reset removed - credits are now persistent
     # scheduler.add_job(reset_free, "cron", hour=0, minute=0)
     scheduler.start()
+
+    # Register components and install graceful shutdown handlers
+    shutdown_manager.register(client=app, scheduler=scheduler, loop=app.loop)
+    shutdown_manager.install_signal_handlers()
 
     # Auto-update yt-dlp on every startup
     auto_update_ytdlp()
@@ -1264,4 +1277,10 @@ By @BennyThink, VIP Mode: {ENABLE_VIP}
         else:
             raise
     finally:
+        if scheduler and getattr(scheduler, "running", False):
+            try:
+                scheduler.shutdown(wait=False)
+            except Exception:
+                pass
+        shutdown_manager.shutdown_completed()
         release_process_lock()

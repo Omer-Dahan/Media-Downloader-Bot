@@ -184,6 +184,7 @@ def extract_url_and_name(message_text):
 
     return url, new_name
 
+
 from utils.process_lock import acquire_process_lock, release_process_lock
 from utils.session_guard import (
     is_fatal_session_error,
@@ -191,4 +192,9 @@ from utils.session_guard import (
     send_http_emergency_alert,
     handle_fatal_session_error,
     setup_asyncio_exception_handler,
+)
+from utils.shutdown import (
+    shutdown_manager,
+    is_shutting_down,
+    terminate_child_processes,
 )
