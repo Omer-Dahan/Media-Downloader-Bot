@@ -1,8 +1,8 @@
 """Graceful shutdown management for Media-Downloader-Bot.
 
 Handles SIGTERM and SIGINT signals with a strict timeout, terminates child processes
-(ffmpeg, yt-dlp, aria2, etc.), releases process locks, stops Telegram client cleanly,
-and includes an independent hard backup watchdog to prevent systemd timeout SIGKILL.
+(ffmpeg, yt-dlp, aria2, etc.), releases process locks, and includes an independent
+hard backup watchdog to prevent systemd timeout SIGKILL.
 """
 
 import asyncio
@@ -61,6 +61,7 @@ def terminate_child_processes(
                 child.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
+        psutil.wait_procs(children, timeout=1.0)
         return handled_pids
 
     for child in children:
@@ -242,24 +243,44 @@ class ShutdownManager:
         )
         self.trigger_shutdown(signum=signum)
 
-    def install_signal_handlers(self):
+    def install_signal_handlers(self) -> None:
         """Install signal handlers for SIGTERM and SIGINT, and patch Kurigram idle."""
         with self._lock:
             if self._installed:
                 return
 
+            installed_sigs = []
             for sig in (signal.SIGTERM, signal.SIGINT):
                 try:
                     self._original_handlers[sig] = signal.getsignal(sig)
                     signal.signal(sig, self._signal_handler)
+                    installed_sigs.append(sig)
                 except (ValueError, OSError) as e:
-                    logging.debug("Could not register signal %s: %s", sig, e)
+                    logging.warning("Could not register signal %s: %s", sig, e)
 
             self._installed = True
-            patch_kurigram_idle()
-            logging.info(
-                "Graceful shutdown signal handlers and Kurigram idle coordination installed"
-            )
+
+            if installed_sigs:
+                sig_names = [
+                    signal.Signals(s).name
+                    if s in signal.Signals.__members__.values()
+                    else str(s)
+                    for s in installed_sigs
+                ]
+                logging.info(
+                    "Graceful shutdown signal handlers installed for: %s",
+                    ", ".join(sig_names),
+                )
+            else:
+                logging.warning("No graceful shutdown signal handlers could be installed")
+
+            idle_patched = patch_kurigram_idle()
+            if idle_patched:
+                logging.info("Kurigram idle coordination installed successfully")
+            else:
+                logging.warning(
+                    "Kurigram idle coordination was not installed; graceful stop via idle will not function"
+                )
 
     def restore_signal_handlers(self):
         """Restore original signal handlers (useful for tests)."""
@@ -286,27 +307,6 @@ class ShutdownManager:
             await self._async_stop_event.wait()
         except asyncio.CancelledError:
             pass
-
-    def stop_client(self, timeout: float = 5.0):
-        """Safely stop client if initialized, avoiding double-stop or exceptions."""
-        client = self._client
-        if not client or not getattr(client, "is_initialized", False):
-            return
-
-        try:
-            loop = self._loop or getattr(client, "loop", None)
-            if loop and loop.is_running():
-                future = asyncio.run_coroutine_threadsafe(client.stop(), loop)
-                future.result(timeout=timeout)
-            elif loop:
-                loop.run_until_complete(
-                    asyncio.wait_for(client.stop(), timeout=timeout)
-                )
-            else:
-                client.stop()
-            logging.info("Telegram client stopped cleanly")
-        except Exception as e:
-            logging.warning("Error or timeout while stopping client: %s", e)
 
     def shutdown_completed(self):
         """Mark shutdown as completed to disarm watchdog and release resources."""
@@ -338,8 +338,11 @@ async def custom_idle():
     await shutdown_manager.wait_for_stop()
 
 
-def patch_kurigram_idle():
-    """Patch Kurigram idle references to coordinate with shutdown_manager."""
+def patch_kurigram_idle() -> bool:
+    """Patch Kurigram idle references to coordinate with shutdown_manager.
+
+    Returns True if patching succeeded, False otherwise.
+    """
     try:
         import pyrogram
         import pyrogram.methods.utilities.idle as pyrogram_idle
@@ -348,5 +351,7 @@ def patch_kurigram_idle():
         pyrogram.idle = custom_idle
         pyrogram_idle.idle = custom_idle
         pyrogram_run.idle = custom_idle
-    except ImportError:
-        pass
+        return True
+    except Exception as e:
+        logging.warning("Failed to patch Kurigram idle coordination: %s", e)
+        return False

@@ -1,6 +1,8 @@
 """Tests for session guard and fatal Telegram session error handling."""
 
 import asyncio
+import subprocess
+import sys
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
@@ -202,7 +204,8 @@ def test_handle_fatal_session_error(tmp_path):
 
     exc = pyrogram.errors.AuthKeyDuplicated(value="[406 AUTH_KEY_DUPLICATED]")
 
-    with patch("utils.session_guard.send_http_emergency_alert") as mock_alert:
+    with patch("utils.session_guard.send_http_emergency_alert") as mock_alert, \
+         patch("utils.session_guard.terminate_child_processes") as mock_term:
         handle_fatal_session_error(
             exc=exc,
             session_name="main",
@@ -218,9 +221,48 @@ def test_handle_fatal_session_error(tmp_path):
         # 2. Session file was removed
         assert not session_file.exists()
 
-        # 3. Process lock was released (so another process can acquire it)
+        # 3. Child processes termination was invoked with force_kill=True
+        mock_term.assert_called_once_with(force_kill=True)
+
+        # 4. Process lock was released (so another process can acquire it)
         assert acquire_process_lock(lock_file) is True
         release_process_lock()
+
+
+def test_handle_fatal_session_error_terminates_active_child_processes(tmp_path):
+    """Regression test: fatal session error terminates running child processes (e.g. ffmpeg/yt-dlp)."""
+    lock_file = tmp_path / ".fatal_child.lock"
+    acquire_process_lock(lock_file)
+
+    # Spawn real child subprocess simulating active ffmpeg or yt-dlp download
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    assert child.poll() is None
+
+    exc = pyrogram.errors.SessionRevoked(value="[401 SESSION_REVOKED]")
+
+    try:
+        with patch("utils.session_guard.send_http_emergency_alert"):
+            handle_fatal_session_error(
+                exc=exc,
+                session_name="main",
+                bot_token=None,
+                alert_targets=None,
+                workdir=tmp_path,
+                exit_process=False,
+            )
+
+        # Child process must have been forcefully terminated
+        child.wait(timeout=2.0)
+        assert child.poll() is not None
+
+        # Lock file must be released
+        assert not lock_file.exists()
+        assert acquire_process_lock(lock_file) is True
+        release_process_lock()
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
 
 
 def test_asyncio_exception_handler_intercepts_task_exception():

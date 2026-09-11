@@ -171,17 +171,6 @@ def test_process_lock_released_on_normal_shutdown(tmp_path):
     release_process_lock()
 
 
-def test_stop_client_safely_handles_uninitialized_or_stopped_client():
-    """Verify stop_client does not crash or raise ConnectionError on already stopped client."""
-    mock_client = MagicMock()
-    mock_client.is_initialized = False
-
-    shutdown_manager.register(client=mock_client)
-    # Should safely return without calling stop on uninitialized client
-    shutdown_manager.stop_client(timeout=1.0)
-    mock_client.stop.assert_not_called()
-
-
 def test_is_shutting_down_aborts_active_downloader():
     """Verify that BaseDownloader aborts with ValueError when system is shutting down."""
     from engine.base import BaseDownloader
@@ -224,11 +213,46 @@ def test_kurigram_idle_patched_and_coordinates():
     import pyrogram.methods.utilities.idle as pyrogram_idle
     import pyrogram.methods.utilities.run as pyrogram_run
 
-    patch_kurigram_idle()
+    result = patch_kurigram_idle()
+    assert result is True
 
     assert pyrogram.idle is custom_idle
     assert pyrogram_idle.idle is custom_idle
     assert pyrogram_run.idle is custom_idle
+
+
+def test_patch_kurigram_idle_failure_returns_false_and_logs(caplog):
+    """Verify patch_kurigram_idle returns False and logs a warning on error."""
+    caplog.set_level(logging.WARNING)
+    with patch.dict(sys.modules, {"pyrogram": None}):
+        result = patch_kurigram_idle()
+        assert result is False
+        assert any("Failed to patch Kurigram idle" in r.message for r in caplog.records)
+
+
+def test_install_signal_handlers_logs_signals_and_idle_separately(caplog):
+    """Verify install_signal_handlers logs signal handlers and idle patch status separately."""
+    caplog.set_level(logging.INFO)
+    mgr = ShutdownManager()
+
+    # Case 1: Normal installation where idle patch succeeds
+    mgr.install_signal_handlers()
+    assert any("Graceful shutdown signal handlers installed for" in r.message for r in caplog.records)
+    assert any("Kurigram idle coordination installed successfully" in r.message for r in caplog.records)
+    mgr.restore_signal_handlers()
+
+    # Case 2: Idle patch fails, must log clear warning
+    caplog.clear()
+    mgr2 = ShutdownManager()
+    with patch("utils.shutdown.patch_kurigram_idle", return_value=False):
+        mgr2.install_signal_handlers()
+        assert any("Graceful shutdown signal handlers installed for" in r.message for r in caplog.records)
+        assert any("Kurigram idle coordination was not installed" in r.message for r in caplog.records)
+        assert any(
+            r.levelno == logging.WARNING and "Kurigram idle coordination was not installed" in r.message
+            for r in caplog.records
+        )
+        mgr2.restore_signal_handlers()
 
 
 def test_custom_idle_terminates_on_trigger_shutdown():

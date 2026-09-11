@@ -11,6 +11,7 @@ import requests
 import pyrogram.errors
 
 from utils.process_lock import release_process_lock
+from utils.shutdown import terminate_child_processes
 
 # Exceptions indicating that the Telegram auth key or session is permanently invalidated
 FATAL_SESSION_EXCEPTIONS = (
@@ -181,8 +182,9 @@ def handle_fatal_session_error(
     1. Log critical error.
     2. Send out-of-band alert via HTTP Bot API to admin/archive.
     3. Delete invalidated session files so next start can re-auth.
-    4. Release process lock.
-    5. Exit process with code 1 so systemd restarts it cleanly.
+    4. Terminate active child processes (ffmpeg, yt-dlp, aria2).
+    5. Release process lock.
+    6. Exit process with code 1 so systemd restarts it cleanly.
     """
     exc_name = type(exc).__name__
     logging.critical(
@@ -203,6 +205,15 @@ def handle_fatal_session_error(
 
     # Delete the dead session files
     remove_invalidated_session(session_name=session_name, workdir=workdir)
+
+    # Terminate running child processes to prevent orphaned workers
+    try:
+        terminate_child_processes(force_kill=True)
+    except Exception as e:
+        logging.error(
+            "Failed to terminate child processes during fatal session error handling: %s",
+            e,
+        )
 
     # Release process lock so next instance can start immediately
     release_process_lock()
