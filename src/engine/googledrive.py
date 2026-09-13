@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-from engine.base import BaseDownloader
+from engine.base import BaseDownloader, ClassifiedDownloadError
 
 
 def googledrive_download(client: Any, bot_message: Any, url: str) -> None:
@@ -59,7 +59,7 @@ class GoogleDriveDownload(BaseDownloader):
             match = re.search(pattern, self._url)
             if match:
                 return match.group(1)
-        raise ValueError("לא ניתן לחלץ מזהה קובץ מהקישור של Google Drive")
+        raise ClassifiedDownloadError("לא ניתן לחלץ מזהה קובץ מהקישור של Google Drive", is_safe=True)
 
     def _get_doc_type(self) -> str | None:
         """Detect if this is a Google Docs/Sheets/Slides URL."""
@@ -256,13 +256,14 @@ class GoogleDriveDownload(BaseDownloader):
             if files_in_dir:
                 output_file = files_in_dir[0]
             else:
-                raise ValueError(
+                raise ClassifiedDownloadError(
                     "❌ **הורדה מ-Google נכשלה**\n\n"
                     "ייתכן שהקובץ:\n"
                     "• לא משותף ל'כל מי שיש לו את הקישור'\n"
                     "• נמחק או לא קיים\n"
                     "• חוסם הורדות אוטומטיות\n\n"
-                    "בקש מבעל הקובץ לוודא שההגדרות מאפשרות הורדה."
+                    "בקש מבעל הקובץ לוודא שההגדרות מאפשרות הורדה.",
+                    is_safe=True,
                 )
 
         # Detect file type and set format accordingly

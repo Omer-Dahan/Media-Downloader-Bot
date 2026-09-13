@@ -1,5 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
+from engine.base import ClassifiedDownloadError
 from engine.helper import handle_download_error
 from engine.direct import DirectDownload
 
@@ -23,7 +24,7 @@ def krakenfiles_download(client, bot_message, url: str):
             form = soup.find("form", id="dl-form")
             action = form.get("action") if form else None
             if not action:
-                raise ValueError("לא נמצא קישור להורדה.")
+                raise ClassifiedDownloadError("לא נמצא קישור להורדה.", is_safe=True)
             # action may be absolute (server subdomain) or relative to the site root
             if action.startswith("http"):
                 post_url = action
@@ -33,7 +34,7 @@ def krakenfiles_download(client, bot_message, url: str):
             token_input = soup.find("input", id="dl-token")
             token = token_input.get("value") if token_input else None
             if not token:
-                raise ValueError("לא נמצא טוקן להורדה.")
+                raise ClassifiedDownloadError("לא נמצא טוקן להורדה.", is_safe=True)
 
             return post_url, {"token": token}
 
@@ -57,7 +58,7 @@ def krakenfiles_download(client, bot_message, url: str):
         except ValueError as e:
             raise ValueError(f"שגיאה בעיבוד תגובה: {str(e)}")
 
-        raise ValueError("לא ניתן לקבל קישור הורדה")
+        raise ClassifiedDownloadError("לא ניתן לקבל קישור הורדה", is_safe=True)
 
     def _download(url: str):
         try:
@@ -71,5 +72,6 @@ def krakenfiles_download(client, bot_message, url: str):
 
         except ValueError as e:
             handle_download_error(bot_message, e)
+            raise
 
     _download(url)

@@ -16,7 +16,7 @@ from database.model import (
     get_total_credits,
     CreditsExhaustedException,
 )
-from engine.base import BaseDownloader
+from engine.base import BaseDownloader, ClassifiedDownloadError
 from engine.helper import extract_metadata_from_info
 from engine.network_errors import NetworkError, is_network_error
 
@@ -322,14 +322,6 @@ class ClassifiedMessage(str):
         return obj
 
 
-class ClassifiedDownloadError(ValueError):
-    """Exception for classified download errors safe for user display."""
-
-    def __init__(self, message: str, is_safe: bool = True):
-        super().__init__(message)
-        self.is_safe = is_safe
-
-
 def is_playlist_url(url: str) -> bool:
     """Check if the URL is a playlist or channel (multi-item source)."""
     if not url or not isinstance(url, str):
@@ -340,20 +332,34 @@ def is_playlist_url(url: str) -> bool:
         query = parsed.query or ""
         path = parsed.path or ""
 
+        # Existing playlist behavior across platforms
         if "list=" in query:
             return True
         if path.startswith("/playlist") or "/playlist" in path:
             return True
 
-        channel_prefixes = (
-            "/channel/",
-            "/@",
-            "/c/",
-            "/user/",
-        )
-        for prefix in channel_prefixes:
-            if path.startswith(prefix) or prefix in path:
-                return True
+        # Restrict channel / handle / custom URLs to YouTube domains
+        hostname = (parsed.hostname or "").lower()
+        is_yt_domain = hostname in {
+            "youtube.com",
+            "www.youtube.com",
+            "m.youtube.com",
+            "youtu.be",
+            "music.youtube.com",
+            "www.youtube-nocookie.com",
+            "youtube-nocookie.com",
+        } or is_youtube(normalized_url)
+
+        if is_yt_domain:
+            channel_prefixes = (
+                "/channel/",
+                "/@",
+                "/c/",
+                "/user/",
+            )
+            for prefix in channel_prefixes:
+                if path.startswith(prefix) or prefix in path:
+                    return True
 
         return False
     except Exception:

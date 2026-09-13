@@ -14,7 +14,7 @@ from config import (
     TORRENT_STALL_TIMEOUT,
     TORRENT_GLOBAL_TIMEOUT,
 )
-from engine.base import BaseDownloader
+from engine.base import BaseDownloader, ClassifiedDownloadError
 from engine.torrent_manager import (
     TorrentManager,
     TorrentError,
@@ -127,7 +127,8 @@ class TorrentDownload(BaseDownloader):
         elapsed = current_time - self._start_time
         if elapsed > TORRENT_GLOBAL_TIMEOUT:
             raise TorrentError(
-                f"ההורדה הופסקה - חרגת ממגבלת הזמן ({TORRENT_GLOBAL_TIMEOUT // 3600} שעות)"
+                f"ההורדה הופסקה - חרגת ממגבלת הזמן ({TORRENT_GLOBAL_TIMEOUT // 3600} שעות)",
+                is_safe=True,
             )
 
         # Get status from qBittorrent
@@ -139,7 +140,7 @@ class TorrentDownload(BaseDownloader):
             )
 
         if status.get("state") == "missing":
-            raise TorrentError("הטורנט נעלם מהשרת")
+            raise TorrentError("הטורנט נעלם מהשרת", is_safe=True)
 
         # Check for stall (no progress for too long)
         current_progress = status.get("progress", 0)
@@ -150,7 +151,8 @@ class TorrentDownload(BaseDownloader):
             stall_duration = current_time - self._last_progress_time
             if stall_duration > TORRENT_STALL_TIMEOUT:
                 raise TorrentError(
-                    f"ההורדה נתקעה - אין התקדמות כבר {TORRENT_STALL_TIMEOUT // 60} דקות"
+                    f"ההורדה נתקעה - אין התקדמות כבר {TORRENT_STALL_TIMEOUT // 60} דקות",
+                    is_safe=True,
                 )
 
         # Update status message (throttled in edit_text)
@@ -226,7 +228,7 @@ class TorrentDownload(BaseDownloader):
             # Get output path
             output_path = self._manager.get_output_path(self._torrent_hash)
             if not output_path:
-                raise TorrentError("לא ניתן למצוא את הקבצים שהורדו")
+                raise TorrentError("לא ניתן למצוא את הקבצים שהורדו", is_safe=True)
 
             # Prepare files for upload
             upload_files = self._handle_output(output_path)
@@ -322,17 +324,17 @@ class TorrentDownload(BaseDownloader):
                 except Exception as alert_err:
                     logging.error("Failed to send archive alert: %s", alert_err)
 
-            raise ValueError(str(e))
+            raise ClassifiedDownloadError(str(e), is_safe=getattr(e, "is_safe", True))
 
         except TorrentConcurrencyError as e:
             logging.info("Concurrency limit: %s", e)
             self.edit_text(f"⏳ {e}")
-            raise ValueError(str(e))
+            raise ClassifiedDownloadError(str(e), is_safe=True)
 
         except TorrentError as e:
             logging.error("Torrent error: %s", e)
             self.edit_text(f"❌ {e}")
-            raise ValueError(str(e))
+            raise ClassifiedDownloadError(str(e), is_safe=getattr(e, "is_safe", False))
 
         finally:
             # Always cleanup - remove from qBittorrent and tracking

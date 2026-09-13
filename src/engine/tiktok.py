@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 import yt_dlp
 
 from config import ARCHIVE_CHANNEL, TIKTOK_COOKIES_FILE
-from engine.base import BaseDownloader
+from engine.base import BaseDownloader, ClassifiedDownloadError
 
 # Check if gallery-dl is available for slideshow downloads
 try:
@@ -305,7 +305,7 @@ class TikTokDownload(BaseDownloader):
             return files
 
         # All methods failed - raise exception to trigger JDownloader fallback
-        raise ValueError("הורדה מ-TikTok נכשלה מכל השיטות (yt-dlp, gallery-dl, API).")
+        raise ClassifiedDownloadError("הורדה מ-TikTok נכשלה מכל השיטות (yt-dlp, gallery-dl, API).", is_safe=True)
 
     def _get_archive_caption(self, files: list) -> str:
         """Create custom archive caption with both TikTok URLs."""

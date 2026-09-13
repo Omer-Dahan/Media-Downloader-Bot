@@ -36,19 +36,23 @@ _lock = threading.Lock()
 class TorrentError(Exception):
     """Base exception for torrent operations."""
 
-    pass
+    def __init__(self, message: str, is_safe: bool = False):
+        super().__init__(message)
+        self.is_safe = is_safe
 
 
 class TorrentConnectionError(TorrentError):
     """qBittorrent connection failed."""
 
-    pass
+    def __init__(self, message: str, is_safe: bool = True):
+        super().__init__(message, is_safe=is_safe)
 
 
 class TorrentConcurrencyError(TorrentError):
     """Concurrency limit exceeded."""
 
-    pass
+    def __init__(self, message: str, is_safe: bool = True):
+        super().__init__(message, is_safe=is_safe)
 
 
 class TorrentManager:
@@ -195,7 +199,8 @@ class TorrentManager:
                         )
                     else:
                         raise TorrentError(
-                            "הוספת הטורנט נכשלה. קישור המגנט לא תקין או שהשרת חוסם אותו."
+                            "הוספת הטורנט נכשלה. קישור המגנט לא תקין או שהשרת חוסם אותו.",
+                            is_safe=True,
                         )
                 else:
                     raise TorrentError(f"הוספת הטורנט נכשלה: {result}")
@@ -203,13 +208,13 @@ class TorrentManager:
                 # If we didn't have hash, try to extract from source again provided it succeeded?
                 # Actually if it succeeded, we rely on the pre-extracted hash.
                 if not torrent_hash:
-                    raise TorrentError("לא ניתן לחלץ hash מהמגנט לינק")
+                    raise TorrentError("לא ניתן לחלץ hash מהמגנט לינק", is_safe=True)
 
             else:
                 # .torrent file
                 file_path = Path(source)
                 if not file_path.exists():
-                    raise TorrentError("קובץ הטורנט לא נמצא")
+                    raise TorrentError("קובץ הטורנט לא נמצא", is_safe=True)
 
                 with open(file_path, "rb") as f:
                     torrent_content = f.read()
@@ -223,7 +228,7 @@ class TorrentManager:
                     if torrents:
                         torrent_hash = torrents[0].hash
                     else:
-                        raise TorrentError("לא ניתן למצוא את הטורנט שנוסף")
+                        raise TorrentError("לא ניתן למצוא את הטורנט שנוסף", is_safe=True)
                 else:
                     raise TorrentError(f"הוספת הטורנט נכשלה: {result}")
 

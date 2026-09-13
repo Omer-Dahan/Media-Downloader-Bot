@@ -11,7 +11,7 @@ from requests.exceptions import HTTPError
 from urllib.parse import urlparse
 
 from config import ENABLE_ARIA2
-from engine.base import BaseDownloader
+from engine.base import BaseDownloader, ClassifiedDownloadError
 from engine.network_errors import NetworkError, is_network_error
 
 # Common User-Agent to avoid being blocked by servers
@@ -64,8 +64,9 @@ class DirectDownload(BaseDownloader):
             )
 
             if response.status_code >= 400:
-                raise ValueError(
-                    f"ההורדה נכשלה: {response.status_code} - {response.reason}"
+                raise ClassifiedDownloadError(
+                    f"ההורדה נכשלה: {response.status_code} - {response.reason}",
+                    is_safe=True,
                 )
 
             # Get file size from headers if available
@@ -165,8 +166,9 @@ class DirectDownload(BaseDownloader):
 
                 logging.info("Download complete via requests: %d bytes", downloaded)
             except HTTPError as e:
-                raise ValueError(
-                    f"ההורדה נכשלה: {e.response.status_code} - {e.response.reason}"
+                raise ClassifiedDownloadError(
+                    f"ההורדה נכשלה: {e.response.status_code} - {e.response.reason}",
+                    is_safe=True,
                 ) from e
             except requests.exceptions.RequestException as e:
                 # Check if this is a network error
@@ -270,7 +272,7 @@ class DirectDownload(BaseDownloader):
         except subprocess.TimeoutExpired as e:
             error_msg = "\u05d4\u05d4\u05d5\u05e8\u05d3\u05d4 \u05d4\u05d5\u05e4\u05e1\u05e7\u05d4 \u05e2\u05e7\u05d1 \u05d7\u05e8\u05d9\u05d2\u05d4 \u05de\u05d6\u05de\u05df \u05d4\u05d4\u05de\u05ea\u05e0\u05d4 (5 \u05d3\u05e7\u05d5\u05ea)."
             logging.error(error_msg)
-            raise ValueError(error_msg) from e
+            raise ClassifiedDownloadError(error_msg, is_safe=True) from e
         except ValueError:
             # Propagate cancellation / explicit value errors unchanged
             raise

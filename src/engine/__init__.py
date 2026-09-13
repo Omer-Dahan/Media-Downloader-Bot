@@ -4,6 +4,7 @@ import logging
 
 from database.model import CreditsExhaustedException
 
+from engine.base import ClassifiedDownloadError
 from engine.generic import YoutubeDownload
 from engine.direct import DirectDownload
 from engine.pixeldrain import pixeldrain_download
@@ -237,13 +238,13 @@ def special_download_entrance(client: Any, bot_message: Any, url: str) -> Any:
     try:
         hostname = urlparse(url).hostname
         if not hostname:
-            raise ValueError(f"לא ניתן לחלץ hostname של הקישור: {url}")
+            raise ClassifiedDownloadError(f"לא ניתן לחלץ hostname של הקישור: {url}", is_safe=True)
     except (ValueError, TypeError) as e:
-        raise ValueError(f"פורמט קישור לא תקין: {url}") from e
+        raise ClassifiedDownloadError(f"פורמט קישור לא תקין: {url}", is_safe=True) from e
 
     # Handle the special case for YouTube URLs first.
     if hostname.endswith("youtube.com") or hostname == "youtu.be":
-        raise ValueError("לקישורי יוטיוב, פשוט שלח את הקישור ישירות.")
+        raise ClassifiedDownloadError("לקישורי יוטיוב, פשוט שלח את הקישור ישירות.", is_safe=True)
 
     # Iterate through the map to find a matching handler.
     for domain_suffix, handler_function in DOWNLOADER_MAP.items():

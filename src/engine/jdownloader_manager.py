@@ -490,10 +490,10 @@ class JDownloaderManager:
                     break
 
             if pkg is None:
-                # Count other active downloads on device
+                # Count other active downloads with actual traffic on device
                 active_downloads = sum(
                     1 for p in packages
-                    if p.get("running", False) or (p.get("speed", 0) or 0) > 0
+                    if (p.get("speed", 0) or 0) > 0
                 )
                 # Might still be moving from linkgrabber to downloads list
                 return {
@@ -505,10 +505,10 @@ class JDownloaderManager:
                     "active_downloads": active_downloads,
                 }
 
-            # Count other packages currently active or downloading on the device
+            # Count other packages currently downloading with actual traffic on the device
             active_downloads = sum(
                 1 for p in packages
-                if p is not pkg and (p.get("running", False) or (p.get("speed", 0) or 0) > 0)
+                if p is not pkg and (p.get("speed", 0) or 0) > 0
             )
 
             total = pkg.get("bytesTotal", 0) or 0

@@ -65,6 +65,14 @@ def generate_input_media(file_paths: list, cap: str) -> list:
     return input_media
 
 
+class ClassifiedDownloadError(ValueError):
+    """Exception for classified download errors with user safety flag."""
+
+    def __init__(self, message: str, is_safe: bool = True):
+        super().__init__(message)
+        self.is_safe = is_safe
+
+
 class BaseDownloader(ABC):
     def __init__(self, client: Types.Client, bot_msg: Types.Message, url: str):
         self._client = client
@@ -220,12 +228,12 @@ class BaseDownloader(ABC):
 
     def check_for_cancel(self):
         if is_shutting_down():
-            raise ValueError("ההורדה בוטלה עקב כיבוי השרת 🛑")
+            raise ClassifiedDownloadError("ההורדה בוטלה עקב כיבוי השרת 🛑", is_safe=True)
         key = f"{self._chat_id}_{self._id}"
         with _cancellation_lock:
             if key in cancellation_events:
                 cancellation_events.discard(key)
-                raise ValueError("ההורדה בוטלה על ידי המשתמש 🛑")
+                raise ClassifiedDownloadError("ההורדה בוטלה על ידי המשתמש 🛑", is_safe=True)
 
     def edit_text(self, text: str):
         if is_shutting_down():
@@ -1076,7 +1084,7 @@ class BaseDownloader(ABC):
                     raise ValueError(
                         "CACHE_CORRUPTED: Expected media file id, got wrong type"
                     )
-                raise ValueError("שגיאה: לקישורים ישירים, נסה שוב עם `/direct`.")
+                raise ClassifiedDownloadError("שגיאה: לקישורים ישירים, נסה שוב עם `/direct`.", is_safe=True)
 
         else:
             logging.error("Unknown upload format settings for %s", self._format)

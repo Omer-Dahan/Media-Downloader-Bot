@@ -93,7 +93,11 @@ def safe_truncate(text: str, limit: int = 4000) -> str:
 
 def handle_download_error(bot_message, error: Exception):
     """Safely format and send a generic download error message."""
-    truncated_error = safe_truncate(str(error), limit=3500)
+    if getattr(error, "is_safe", False) is True:
+        err_msg = str(error)
+    else:
+        err_msg = "אירעה שגיאה בעיבוד הקישור."
+    truncated_error = safe_truncate(err_msg, limit=3500)
     bot_message.edit_text(
         f"ההורדה נכשלה!❌\nאירעה שגיאה: `{truncated_error}`\n"
         "אנא בדוק את הקישור ונסה שוב."

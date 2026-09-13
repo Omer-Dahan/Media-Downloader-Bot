@@ -1,5 +1,6 @@
 import re
 from urllib.parse import urlparse
+from engine.base import ClassifiedDownloadError
 from engine.helper import handle_download_error
 from engine.direct import DirectDownload
 
@@ -16,7 +17,7 @@ def pixeldrain_download(client, bot_message, url):
         if parsed.path.startswith("/file/"):
             return parsed.path.split("/")[-1]
 
-        raise ValueError("פורמט קישור Pixeldrain לא תקין")
+        raise ClassifiedDownloadError("פורמט קישור Pixeldrain לא תקין", is_safe=True)
 
     def _get_download_url(file_id):
         return FILE_URL_FORMAT.format(file_id)
@@ -31,5 +32,6 @@ def pixeldrain_download(client, bot_message, url):
 
         except ValueError as e:
             handle_download_error(bot_message, e)
+            raise
 
     _download(url)

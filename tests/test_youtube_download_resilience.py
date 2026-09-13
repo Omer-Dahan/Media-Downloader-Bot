@@ -96,6 +96,17 @@ def test_is_playlist_url():
     assert is_playlist_url("") is False
     assert is_playlist_url(None) is False
 
+    # Legitimate non-YouTube links with handles / user paths must NOT be treated as playlists
+    assert is_playlist_url("https://www.tiktok.com/@username/video/1234567890123456789") is False
+    assert is_playlist_url("https://www.tiktok.com/@username") is False
+    assert is_playlist_url("https://www.threads.net/@someuser/post/Cxyz") is False
+    assert is_playlist_url("https://www.instagram.com/p/Cxyz") is False
+    assert is_playlist_url("https://x.com/username/status/123456") is False
+
+    # Non-YouTube playlists with list= or /playlist path (preserved behavior)
+    assert is_playlist_url("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M") is True
+    assert is_playlist_url("https://example.com/audio?list=favorite_tracks") is True
+
 
 def test_ytdlp_logger_captures_errors_and_warnings():
     """Verify YtDlpLogger captures logs and preserves error messages."""
@@ -265,6 +276,11 @@ def test_check_link_consistency_for_playlists_and_channels():
         assert check_link("https://www.youtube.com/user/UserName/videos", uid=1) == "PLAYLIST_NO_CREDITS"
         assert check_link("https://www.youtube.com/playlist?list=PL123", uid=1) == "PLAYLIST_NO_CREDITS"
 
+        # Legitimate single non-YouTube URLs with @ handles must NOT be blocked
+        assert check_link("https://www.tiktok.com/@username/video/1234567890123456789", uid=1) is None
+        assert check_link("https://www.threads.net/@someuser/post/Cxyz", uid=1) is None
+        assert check_link("https://www.youtube.com/watch?v=iL686rbf82M", uid=1) is None
+
     with patch("main.get_total_credits", return_value=5):
         # Channel and playlist URLs allowed with credits
         assert check_link("https://www.youtube.com/channel/UC12345", uid=1) is None
@@ -391,6 +407,17 @@ def test_jdownloader_manager_calculates_active_downloads():
     assert status["state"] == "waiting"
     assert status.get("active_downloads") == 1
 
+    # When other package is running but stalled (speed 0), active_downloads must be 0
+    stalled_pkg = dict(active_pkg)
+    stalled_pkg["speed"] = 0
+    mgr._device.downloads.query_packages.return_value = [our_pkg, stalled_pkg]
+
+    with patch("engine.jdownloader_manager.JDOWNLOADER_DOWNLOAD_DIR", "/tmp/downloads"):
+        status_stalled = mgr.get_status("TGBot_our_pkg")
+
+    assert status_stalled["state"] == "waiting"
+    assert status_stalled.get("active_downloads") == 0
+
 
 def test_user_error_message_sanitization_and_no_path_leak():
     """Verify get_user_friendly_error_message displays classified messages but redacts raw errors."""
@@ -499,3 +526,83 @@ def test_jdownloader_fatal_error_keywords_still_fail():
 
         assert status["state"] == "error", f"Failed for status: {fatal_status}"
         assert status["error"] == fatal_status
+
+
+def test_multi_engine_safe_error_classification_and_generic_fallback():
+    """Verify static messages from all engines are displayed and unsafe errors fall back."""
+    from main import get_user_friendly_error_message, GENERIC_ERROR_MESSAGE, KNOWN_SAFE_SUBSTRINGS
+    from engine.base import ClassifiedDownloadError
+    from engine.torrent_manager import TorrentError, TorrentConnectionError, TorrentConcurrencyError
+
+    # Verify no fake strings in allowlist
+    assert "הורדות פעילות במקביל" not in KNOWN_SAFE_SUBSTRINGS
+
+    # 1. Pixeldrain safe error
+    pd_err = ClassifiedDownloadError("פורמט קישור Pixeldrain לא תקין", is_safe=True)
+    assert "פורמט קישור Pixeldrain לא תקין" in get_user_friendly_error_message(pd_err)
+
+    # 2. Google Drive safe errors
+    gd_err1 = ClassifiedDownloadError("לא ניתן לחלץ מזהה קובץ מהקישור של Google Drive", is_safe=True)
+    assert "לא ניתן לחלץ מזהה קובץ" in get_user_friendly_error_message(gd_err1)
+
+    gd_err2 = ClassifiedDownloadError("❌ **הורדה מ-Google נכשלה**\n\nייתכן שהקובץ...", is_safe=True)
+    assert "הורדה מ-Google נכשלה" in get_user_friendly_error_message(gd_err2)
+
+    # 3. Krakenfiles safe errors
+    kf_err1 = ClassifiedDownloadError("לא נמצא קישור להורדה.", is_safe=True)
+    assert "לא נמצא קישור להורדה" in get_user_friendly_error_message(kf_err1)
+
+    kf_err2 = ClassifiedDownloadError("לא ניתן לקבל קישור הורדה", is_safe=True)
+    assert "לא ניתן לקבל קישור הורדה" in get_user_friendly_error_message(kf_err2)
+
+    # Krakenfiles unsafe internal exception
+    kf_unsafe = ValueError("נכשל לטעון את הדף: HTTPSConnectionPool(host='krakenfiles.com', port=443)")
+    assert get_user_friendly_error_message(kf_unsafe) == GENERIC_ERROR_MESSAGE
+
+    # 4. TikTok safe error
+    tt_err = ClassifiedDownloadError("הורדה מ-TikTok נכשלה מכל השיטות (yt-dlp, gallery-dl, API).", is_safe=True)
+    assert "הורדה מ-TikTok נכשלה מכל השיטות" in get_user_friendly_error_message(tt_err)
+
+    # 5. Direct download safe errors & unsafe fallback
+    dd_timeout = ClassifiedDownloadError("ההורדה הופסקה עקב חריגה מזמן ההמתנה (5 דקות).", is_safe=True)
+    assert "ההורדה הופסקה עקב חריגה מזמן ההמתנה" in get_user_friendly_error_message(dd_timeout)
+
+    dd_unsafe_conn = ValueError("שגיאת חיבור: Connection reset by peer")
+    assert get_user_friendly_error_message(dd_unsafe_conn) == GENERIC_ERROR_MESSAGE
+
+    dd_unsafe_aria = ValueError("הורדת aria2 נכשלה: Command failed with exit code 1")
+    assert get_user_friendly_error_message(dd_unsafe_aria) == GENERIC_ERROR_MESSAGE
+
+    # 6. Torrent safe errors & unsafe fallback
+    tor_missing = ClassifiedDownloadError("הטורנט נעלם מהשרת", is_safe=True)
+    assert "הטורנט נעלם מהשרת" in get_user_friendly_error_message(tor_missing)
+
+    tor_concur = ClassifiedDownloadError("הגעת למגבלת הטורנטים המקבילים", is_safe=True)
+    assert "הגעת למגבלת הטורנטים המקבילים" in get_user_friendly_error_message(tor_concur)
+
+    tor_unsafe = ClassifiedDownloadError("שגיאה בהוספת הטורנט: internal socket error", is_safe=False)
+    assert get_user_friendly_error_message(tor_unsafe) == GENERIC_ERROR_MESSAGE
+
+    # 7. engine/__init__.py safe errors
+    init_yt = ClassifiedDownloadError("לקישורי יוטיוב, פשוט שלח את הקישור ישירות.", is_safe=True)
+    assert "לקישורי יוטיוב, פשוט שלח את הקישור ישירות." in get_user_friendly_error_message(init_yt)
+
+    # 8. base.py cancellation & direct hint
+    cancel_user = ClassifiedDownloadError("ההורדה בוטלה על ידי המשתמש 🛑", is_safe=True)
+    assert "ההורדה בוטלה על ידי המשתמש 🛑" in get_user_friendly_error_message(cancel_user)
+
+    cancel_shutdown = ClassifiedDownloadError("ההורדה בוטלה עקב כיבוי השרת 🛑", is_safe=True)
+    assert "ההורדה בוטלה עקב כיבוי השרת 🛑" in get_user_friendly_error_message(cancel_shutdown)
+
+    base_hint = ClassifiedDownloadError("שגיאה: לקישורים ישירים, נסה שוב עם `/direct`.", is_safe=True)
+    assert "שגיאה: לקישורים ישירים, נסה שוב עם `/direct`." in get_user_friendly_error_message(base_hint)
+
+    # base.py unsafe errors
+    base_split = ValueError("שגיאה בפיצול הקובץ: ffmpeg subprocess exited with 1")
+    assert get_user_friendly_error_message(base_split) == GENERIC_ERROR_MESSAGE
+
+    base_read = ValueError("לא הצלחתי לקרוא את הסרטון: ffprobe failed")
+    assert get_user_friendly_error_message(base_read) == GENERIC_ERROR_MESSAGE
+
+    base_cache = ValueError("CACHE_CORRUPTED: Expected media file id, got wrong type")
+    assert get_user_friendly_error_message(base_cache) == GENERIC_ERROR_MESSAGE
