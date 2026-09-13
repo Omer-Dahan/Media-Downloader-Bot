@@ -52,6 +52,18 @@ def youtube_entrance(client, bot_message, url):
             logging.info("YouTube download cancelled by user, skipping fallback")
             return
 
+        err_str = str(e)
+        if any(unrecoverable in err_str for unrecoverable in [
+            "סרטון פרטי",
+            "נמחק",
+            "הסרטון אינו זמין",
+            "שידור חי",
+            "הגבלה גיאוגרפית",
+        ]):
+            logging.info("YouTube download failed with unrecoverable error, skipping JDownloader fallback: %s", e)
+            bot_message.edit_text(f"❌ {e}")
+            return
+
         logging.info(
             "youtube_entrance failed for %s, falling back to JDownloader: %s", url, e
         )
@@ -76,6 +88,18 @@ def youtube_entrance_with_quality(client, bot_message, url, quality: str):
             logging.info(
                 "YouTube download (quality) cancelled by user, skipping fallback"
             )
+            return
+
+        err_str = str(e)
+        if any(unrecoverable in err_str for unrecoverable in [
+            "סרטון פרטי",
+            "נמחק",
+            "הסרטון אינו זמין",
+            "שידור חי",
+            "הגבלה גיאוגרפית",
+        ]):
+            logging.info("YouTube download (quality) failed with unrecoverable error, skipping JDownloader fallback: %s", e)
+            bot_message.edit_text(f"❌ {e}")
             return
 
         logging.info(

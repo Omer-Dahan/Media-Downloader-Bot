@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
+import shutil
 
 import yt_dlp
 
@@ -290,7 +292,135 @@ def match_filter(info_dict):
     return None  # Allow download for non-live videos
 
 
+
+class YtDlpLogger:
+    """Logger for yt-dlp that captures warnings and errors."""
+
+    def __init__(self):
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
+
+    def debug(self, msg: str):
+        pass
+
+    def warning(self, msg: str):
+        self.warnings.append(str(msg))
+        logging.warning("[yt-dlp] %s", msg)
+
+    def error(self, msg: str):
+        self.errors.append(str(msg))
+        logging.error("[yt-dlp] %s", msg)
+
+
+def is_playlist_url(url: str) -> bool:
+    """Check if the URL is a playlist."""
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+        return "list=" in parsed.query or "/playlist" in parsed.path
+    except Exception:
+        return False
+
+
+def is_gallery_dl_available() -> bool:
+    """Check if gallery-dl is installed and executable."""
+    import shutil
+    if shutil.which("gallery-dl"):
+        return True
+    venv_bin = Path(sys.executable).parent / "gallery-dl"
+    if venv_bin.is_file() and os.access(venv_bin, os.X_OK):
+        return True
+    try:
+        import importlib.util
+        return importlib.util.find_spec("gallery_dl") is not None
+    except Exception:
+        return False
+
+
+def get_gallery_dl_cmd() -> list[str]:
+    """Get the command to execute gallery-dl."""
+    import shutil
+    if shutil.which("gallery-dl"):
+        return ["gallery-dl"]
+    venv_bin = Path(sys.executable).parent / "gallery-dl"
+    if venv_bin.is_file() and os.access(venv_bin, os.X_OK):
+        return [str(venv_bin)]
+    return [sys.executable, "-m", "gallery_dl"]
+
+
+def classify_download_error(error_msg: str | None, url: str = "") -> str:
+    """Classify the error message into a human-readable Hebrew message with accurate cause."""
+    if not error_msg:
+        return "ההורדה נכשלה: לא התקבל קובץ מדיה."
+
+    err_lower = error_msg.lower()
+
+    # Bot detection / Captcha / Sign-in required
+    if any(k in err_lower for k in [
+        "sign in to confirm you're not a bot",
+        "confirm you're not a bot",
+        "bot detection",
+        "automated queries",
+        "unusual traffic",
+        "sign in to confirm your age",
+        "requires authentication",
+        "login required",
+        "http error 429",
+    ]):
+        return (
+            "ההורדה מיוטיוב נחסמה (זיהוי בוט / נדרש אימות).\nיש לעדכן את קובץ ה-cookies בשרת או להמתין להסרת החסימה."
+        )
+
+    # Cookie specific errors
+    if any(k in err_lower for k in ["cookie", "cookies"]) and not any(k in err_lower for k in ["not a bot"]):
+        return (
+            "שגיאת אימות מול יוטיוב: קובץ ה-cookies אינו תקין או שפג תוקפו.\nיש לרענן את קובץ ה-cookies בשרת."
+        )
+
+    # Private / unavailable / deleted video
+    if any(k in err_lower for k in [
+        "this video is unavailable",
+        "video unavailable",
+        "this video is private",
+        "private video",
+        "has been removed",
+        "members-only content",
+        "who has blocked you",
+    ]):
+        return "הסרטון אינו זמין (סרטון פרטי, נמחק, או דורש מנוי ערוץ)."
+
+    # Geo restriction
+    if any(k in err_lower for k in [
+        "not available in your country",
+        "available in your country",
+        "geographic restriction",
+        "blocked in your country",
+        "georestricted",
+    ]):
+        return "הסרטון חסום לצפייה במדינה שבה נמצא השרת (הגבלה גיאוגרפית)."
+
+    # Live stream
+    if any(k in err_lower for k in ["שידור חי", "live stream"]):
+        return "לא ניתן להוריד שידור חי פעיל."
+
+    # Format issues
+    if any(k in err_lower for k in [
+        "requested format is not available",
+        "no video formats found",
+        "format not available",
+    ]):
+        return "ההורדה נכשלה: הפורמט המבוקש אינו זמין עבור סרטון זה."
+
+    # General extraction errors where yt-dlp might actually be outdated
+    if is_extraction_error(error_msg):
+        return f"שגיאה בחילוץ המידע מהקישור. ייתכן ש-yt-dlp דורש עדכון: {error_msg[:120]}"
+
+    return f"ההורדה נכשלה: {error_msg[:150]}"
+
+
 class YoutubeDownload(BaseDownloader):
+
     def __init__(self, client, bot_msg, url, selected_quality: str = None):
         """Initialize YoutubeDownload.
 
@@ -437,7 +567,9 @@ class YoutubeDownload(BaseDownloader):
     ) -> list:
         output = Path(self._tempdir.name, "%(title).70s.%(ext)s").as_posix()
 
+        yt_logger = YtDlpLogger()
         ydl_opts = {
+            "logger": yt_logger,
             "progress_hooks": [lambda d: self.download_hook(d)],
             "outtmpl": output,
             "restrictfilenames": False,
@@ -453,8 +585,8 @@ class YoutubeDownload(BaseDownloader):
             "writethumbnail": True,
             # Ensure MP4 output for Telegram inline streaming support
             "merge_output_format": "mp4",
-            # Skip private/unavailable videos in playlists instead of failing
-            "ignoreerrors": True,
+            # Only ignore errors during playlist batch downloading, not single videos
+            "ignoreerrors": "only_download" if is_playlist_url(self._url) else False,
             # Enable Node.js runtime for YouTube JS challenge solving (signature + n parameter)
             "js_runtimes": {"node": {}},
             "remote_components": {"ejs:github": {}},
@@ -487,18 +619,25 @@ class YoutubeDownload(BaseDownloader):
             ydl_opts["subtitlesformat"] = "srt"
 
         use_aria2 = ENABLE_ARIA2 if _use_aria2 is None else _use_aria2
+        aria2_actually_used = False
         if use_aria2 and not is_youtube(self._url):
-            logging.info(
-                "[DOWNLOAD METHOD: aria2] Using aria2c as external downloader with 16 connections"
-            )
-            ydl_opts["external_downloader"] = "aria2c"
-            ydl_opts["external_downloader_args"] = {
-                "aria2c": ["-x16", "-s16", "-k1M", "--max-tries=3", "--retry-wait=3"]
-            }
-            # Show progress message since aria2 doesn't trigger yt-dlp progress hooks
-            self.edit_text(
-                "⚡ **מוריד במהירות גבוהה...**\n\n🚀 הורדה מהירה עם 16 חיבורים מקבילים\n⏳ נא להמתין - ההעלאה תתחיל בסיום"
-            )
+            if shutil.which("aria2c"):
+                logging.info(
+                    "[DOWNLOAD METHOD: aria2] Using aria2c as external downloader with 16 connections"
+                )
+                ydl_opts["external_downloader"] = "aria2c"
+                ydl_opts["external_downloader_args"] = {
+                    "aria2c": ["-x16", "-s16", "-k1M", "--max-tries=3", "--retry-wait=3"]
+                }
+                aria2_actually_used = True
+                # Show progress message since aria2 doesn't trigger yt-dlp progress hooks
+                self.edit_text(
+                    "⚡ **מוריד במהירות גבוהה...**\n\n🚀 הורדה מהירה עם 16 חיבורים מקבילים\n⏳ נא להמתין - ההעלאה תתחיל בסיום"
+                )
+            else:
+                logging.warning(
+                    "[DOWNLOAD METHOD: aria2] aria2c executable not found in PATH, using built-in"
+                )
         else:
             if is_youtube(self._url):
                 logging.info(
@@ -549,6 +688,7 @@ class YoutubeDownload(BaseDownloader):
         files = None
         extraction_error_encountered = False
         last_error = None
+        self._last_download_error = None
 
         for f in formats:
             try:
@@ -604,8 +744,13 @@ class YoutubeDownload(BaseDownloader):
                         "Found files but no media: %s (likely download failed)",
                         [f.name for f in all_files],
                     )
+                # If info was None or empty without raising an exception, capture from logger
+                if not files and yt_logger.errors:
+                    last_error = yt_logger.errors[-1]
+                    self._last_download_error = last_error
             except Exception as e:
                 last_error = str(e)
+                self._last_download_error = last_error
                 # Check if this is a cancellation - don't try next format, just stop
                 if "בוטלה" in last_error:
                     logging.info("Download cancelled by user, stopping format attempts")
@@ -638,9 +783,27 @@ class YoutubeDownload(BaseDownloader):
                 # Check if this is an extraction error
                 if is_extraction_error(last_error):
                     extraction_error_encountered = True
+                # If the error is fatal (private, removed, geo-blocked, bot-blocked), subsequent formats will also fail
+                err_lower = last_error.lower()
+                if any(fatal in err_lower for fatal in [
+                    "sign in to confirm you're not a bot",
+                    "confirm you're not a bot",
+                    "this video is private",
+                    "private video",
+                    "this video is unavailable",
+                    "video unavailable",
+                    "has been removed",
+                    "not available in your country",
+                    "geographic restriction",
+                ]):
+                    logging.warning("Encountered fatal non-format error: %s, stopping format attempts", last_error)
+                    break
                 continue
 
         # If all formats failed due to extraction error, try auto-updating yt-dlp
+        if not files and not self._last_download_error and yt_logger.errors:
+            self._last_download_error = yt_logger.errors[-1]
+
         if not files and extraction_error_encountered and not _retry_after_update:
             logging.info("Extraction error detected, attempting yt-dlp auto-update...")
             if try_update_ytdlp():
@@ -652,7 +815,8 @@ class YoutubeDownload(BaseDownloader):
                 logging.warning("yt-dlp auto-update failed or already attempted")
 
         # Fallback: if aria2 was used and failed, retry with built-in yt-dlp downloader
-        if not files and use_aria2 and _use_aria2 is None:
+        # Fallback: only if aria2 was actually used and failed, retry with built-in yt-dlp downloader
+        if not files and aria2_actually_used and _use_aria2 is None:
             logging.warning(
                 "[aria2 FALLBACK] aria2 failed, retrying with built-in yt-dlp downloader..."
             )
@@ -664,13 +828,17 @@ class YoutubeDownload(BaseDownloader):
 
     def _try_gallery_dl(self) -> list | None:
         """Try to download using gallery-dl as a fallback."""
+        if is_youtube(self._url):
+            return None
+
+        if not is_gallery_dl_available():
+            logging.warning("[GALLERY-DL] gallery-dl is not available on this system")
+            return None
 
         output = Path(self._tempdir.name)
 
         try:
-            # Run gallery-dl with output to temp directory
-            cmd = [
-                "gallery-dl",
+            cmd = get_gallery_dl_cmd() + [
                 "--dest",
                 str(output),
                 "--no-mtime",  # Don't set modification time
@@ -720,7 +888,7 @@ class YoutubeDownload(BaseDownloader):
             logging.error("[GALLERY-DL] Timed out after 5 minutes")
             return None
         except FileNotFoundError:
-            logging.error("[GALLERY-DL] gallery-dl not installed or not in PATH")
+            logging.error("[GALLERY-DL] gallery-dl executable not found")
             return None
         except Exception as e:
             logging.error("[GALLERY-DL] Error: %s", e)
@@ -758,17 +926,21 @@ class YoutubeDownload(BaseDownloader):
             logging.info("All files in tempdir: %s", all_files_in_temp)
 
             if not files:
-                # Fallback to gallery-dl
-                logging.info(
-                    "[GALLERY-DL FALLBACK] yt-dlp failed, trying gallery-dl..."
-                )
-                self.edit_text("🔄 **yt-dlp נכשל, מנסה gallery-dl...**")
-                files = self._try_gallery_dl()
+                # Fallback to gallery-dl only for non-YouTube URLs when gallery-dl is available
+                if not is_youtube(self._url) and is_gallery_dl_available():
+                    logging.info(
+                        "[GALLERY-DL FALLBACK] yt-dlp failed, trying gallery-dl..."
+                    )
+                    self.edit_text("🔄 **yt-dlp נכשל, מנסה gallery-dl...**")
+                    files = self._try_gallery_dl()
+                elif is_youtube(self._url):
+                    logging.debug("[GALLERY-DL] Skipping gallery-dl fallback for YouTube URL")
+                else:
+                    logging.warning("[GALLERY-DL] Skipping gallery-dl fallback: gallery-dl is not installed")
 
             if not files:
-                raise ValueError(
-                    "ההורדה נכשלה - לא נמצאו פורמטים זמינים. נסה לעדכן את yt-dlp."
-                )
+                error_desc = classify_download_error(self._last_download_error, self._url)
+                raise ValueError(error_desc)
             self._upload()
         except NetworkError as e:
             # Network error - show resume button

@@ -507,6 +507,35 @@ class JDownloaderManager:
             status_text = pkg.get("status", "")
             name = pkg.get("name", "Unknown")
 
+            # Check for error in package status
+            if status_text:
+                status_text_lower = status_text.lower()
+                error_keywords = (
+                    "error",
+                    "defect",
+                    "failed",
+                    "offline",
+                    "captcha",
+                    "plugin",
+                    "problem",
+                    "blocked",
+                    "expired",
+                    "account missing",
+                    "limit",
+                )
+                if any(k in status_text_lower for k in error_keywords):
+                    return {
+                        "progress": 0.0,
+                        "speed": 0,
+                        "eta": -1,
+                        "state": "error",
+                        "error": status_text,
+                        "downloaded": downloaded,
+                        "total": total,
+                        "name": name,
+                        "status_text": status_text,
+                    }
+
             if finished:
                 progress = 100.0
                 state = "finished"
@@ -516,6 +545,52 @@ class JDownloaderManager:
             else:
                 progress = round((downloaded / total * 100), 1) if total > 0 else 0.0
                 state = "waiting"
+
+            if not finished and not running:
+                # Check individual links for errors if package appears waiting
+                pkg_uuid = pkg.get("uuid")
+                if pkg_uuid:
+                    try:
+                        links = self._device.downloads.query_links(
+                            [
+                                {
+                                    "packageUUIDs": [pkg_uuid],
+                                    "status": True,
+                                    "error": True,
+                                }
+                            ]
+                        )
+                        if links:
+                            for lnk in links:
+                                lnk_status = (lnk.get("status") or "").lower()
+                                lnk_error = (lnk.get("error") or "").lower()
+                                for err_k in (
+                                    "error",
+                                    "defect",
+                                    "failed",
+                                    "offline",
+                                    "captcha",
+                                    "blocked",
+                                ):
+                                    if err_k in lnk_status or err_k in lnk_error:
+                                        err_msg = (
+                                            lnk.get("status")
+                                            or lnk.get("error")
+                                            or "שגיאת קישור ב-JDownloader"
+                                        )
+                                        return {
+                                            "progress": 0.0,
+                                            "speed": 0,
+                                            "eta": -1,
+                                            "state": "error",
+                                            "error": err_msg,
+                                            "downloaded": downloaded,
+                                            "total": total,
+                                            "name": name,
+                                            "status_text": status_text or err_msg,
+                                        }
+                    except Exception:
+                        pass
 
             return {
                 "progress": progress,

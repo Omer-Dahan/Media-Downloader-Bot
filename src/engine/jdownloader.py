@@ -193,16 +193,30 @@ class JDownloaderDownload(BaseDownloader):
         if state == "missing":
             raise JDownloaderError("ההורדה נעלמה מ-JDownloader.")
 
-        # Check stall
+        # Check stall in both downloading (zero speed) and waiting (not starting) states
         speed = status.get("speed", 0)
-        if speed == 0 and state == "downloading":
+        downloaded = status.get("downloaded", 0)
+
+        if not hasattr(self, "_last_downloaded_bytes"):
+            self._last_downloaded_bytes = downloaded
+
+        has_progress = (speed > 0) or (downloaded > self._last_downloaded_bytes)
+        self._last_downloaded_bytes = downloaded
+
+        if not has_progress and state in ("downloading", "waiting"):
             if self._stall_start == 0:
                 self._stall_start = time.time()
             elif time.time() - self._stall_start > JDOWNLOADER_STALL_TIMEOUT:
-                raise JDownloaderError(
-                    f"ההורדה תקועה כבר {JDOWNLOADER_STALL_TIMEOUT // 60} דקות ללא התקדמות."
-                )
-        else:
+                stall_minutes = max(1, JDOWNLOADER_STALL_TIMEOUT // 60)
+                if state == "waiting":
+                    raise JDownloaderError(
+                        f"ההורדה ב-JDownloader2 תקועה במצב המתנה מעל {stall_minutes} דקות (ההורדה לא החלה)."
+                    )
+                else:
+                    raise JDownloaderError(
+                        f"ההורדה ב-JDownloader2 תקועה כבר {stall_minutes} דקות ללא התקדמות."
+                    )
+        elif has_progress:
             self._stall_start = 0
 
         return False

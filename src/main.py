@@ -712,11 +712,15 @@ def download_handler(client: Client, message: types.Message):
         if not is_shutting_down():
             report_error_to_archive(client, message.from_user, url, e)
             logging.error("Download failed", exc_info=True)
-            message.reply_text(
-                "❌ לא הצלחתי להוריד את הקישור הזה כרגע.\n"
-                "נסה שוב עוד מעט או שלח קישור אחר.",
-                quote=True,
-            )
+            error_text = str(e)
+            if error_text and not any(k in error_text for k in ["Traceback", "object at 0x", "NoneType"]):
+                message.reply_text(f"❌ {error_text}", quote=True)
+            else:
+                message.reply_text(
+                    "❌ לא הצלחתי להוריד את הקישור הזה כרגע.\n"
+                    "נסה שוב עוד מעט או שלח קישור אחר.",
+                    quote=True,
+                )
     finally:
         end_request_log()
         # Release the concurrency slot. For the YouTube menu path this is correct
@@ -1070,16 +1074,25 @@ def youtube_quality_callback(client: Client, callback_query: types.CallbackQuery
         )
     except BandwidthExhaustedException as e:
         callback_query.message.edit_text(str(e))
+    except ValueError as e:
+        if not is_shutting_down():
+            user = callback_query.from_user
+            report_error_to_archive(client, user, url, e)
+            callback_query.message.edit_text(f"❌ {e}")
     except Exception as e:
         if not is_shutting_down():
             # Get user for error reporting
             user = callback_query.from_user
             report_error_to_archive(client, user, url, e)
             logging.error("Download failed", exc_info=True)
-            callback_query.message.edit_text(
-                "❌ לא הצלחתי להוריד את הקישור הזה כרגע.\n"
-                "נסה שוב עוד מעט או שלח קישור אחר."
-            )
+            error_text = str(e)
+            if error_text and not any(k in error_text for k in ["Traceback", "object at 0x", "NoneType"]):
+                callback_query.message.edit_text(f"❌ {error_text}")
+            else:
+                callback_query.message.edit_text(
+                    "❌ לא הצלחתי להוריד את הקישור הזה כרגע.\n"
+                    "נסה שוב עוד מעט או שלח קישור אחר."
+                )
     finally:
         end_request_log()
         concurrency_manager.release(chat_id)
