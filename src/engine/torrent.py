@@ -14,7 +14,7 @@ from config import (
     TORRENT_STALL_TIMEOUT,
     TORRENT_GLOBAL_TIMEOUT,
 )
-from engine.base import BaseDownloader, ClassifiedDownloadError
+from engine.base import BaseDownloader, ClassifiedDownloadError, format_safe_error_message
 from engine.torrent_manager import (
     TorrentManager,
     TorrentError,
@@ -304,7 +304,7 @@ class TorrentDownload(BaseDownloader):
 
         except TorrentConnectionError as e:
             logging.error("qBittorrent connection error: %s", e)
-            self.edit_text(f"❌ {e}")
+            self.edit_text(format_safe_error_message(e, prefix="❌ "))
 
             # Alert admin via archive channel
             from config import ARCHIVE_CHANNEL
@@ -328,12 +328,12 @@ class TorrentDownload(BaseDownloader):
 
         except TorrentConcurrencyError as e:
             logging.info("Concurrency limit: %s", e)
-            self.edit_text(f"⏳ {e}")
+            self.edit_text(format_safe_error_message(e, prefix="⏳ "))
             raise ClassifiedDownloadError(str(e), is_safe=True)
 
         except TorrentError as e:
             logging.error("Torrent error: %s", e)
-            self.edit_text(f"❌ {e}")
+            self.edit_text(format_safe_error_message(e, prefix="❌ "))
             raise ClassifiedDownloadError(str(e), is_safe=getattr(e, "is_safe", False))
 
         finally:

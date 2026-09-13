@@ -73,6 +73,26 @@ class ClassifiedDownloadError(ValueError):
         self.is_safe = is_safe
 
 
+def format_safe_error_message(
+    e: Exception,
+    fallback: str = "כשל כללי בהורדה",
+    prefix: str = "",
+) -> str:
+    """Return error message if marked safe, otherwise return fallback message."""
+    is_safe = bool(getattr(e, "is_safe", False))
+    err_text = str(e).strip() if e is not None else ""
+    raw_msg = err_text if (is_safe and err_text) else fallback
+    clean_prefix = prefix.strip()
+    if clean_prefix and raw_msg.startswith(clean_prefix):
+        return raw_msg
+    if prefix:
+        return f"{prefix}{raw_msg}"
+    return raw_msg
+
+
+get_safe_error_message = format_safe_error_message
+
+
 class BaseDownloader(ABC):
     def __init__(self, client: Types.Client, bot_msg: Types.Message, url: str):
         self._client = client

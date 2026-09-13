@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-from engine.base import BaseDownloader, ClassifiedDownloadError
+from engine.base import BaseDownloader, ClassifiedDownloadError, format_safe_error_message
 
 
 def googledrive_download(client: Any, bot_message: Any, url: str) -> None:
@@ -298,6 +298,6 @@ class GoogleDriveDownload(BaseDownloader):
                 self._upload(files=files)
         except ValueError as e:
             try:
-                self._bot_msg.edit_text(str(e))
+                self._bot_msg.edit_text(format_safe_error_message(e))
             except Exception:
                 logging.error("Failed to send error message to user")

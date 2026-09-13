@@ -19,7 +19,7 @@ from config import (
     JDOWNLOADER_STALL_TIMEOUT,
     JDOWNLOADER_GLOBAL_TIMEOUT,
 )
-from engine.base import BaseDownloader
+from engine.base import BaseDownloader, format_safe_error_message
 from engine.jdownloader_manager import (
     JDownloaderManager,
     JDownloaderError,
@@ -254,7 +254,7 @@ class JDownloaderDownload(BaseDownloader):
         try:
             self._manager = JDownloaderManager()
         except JDownloaderConnectionError as e:
-            self.edit_text(f"❌ {e}")
+            self.edit_text(format_safe_error_message(e, prefix="❌ "))
             raise
         except Exception as e:
             msg = "❌ לא ניתן להתחבר ל-JDownloader2. ודא שהתוכנה פועלת."
@@ -274,7 +274,7 @@ class JDownloaderDownload(BaseDownloader):
         except JDownloaderConcurrencyError:
             raise
         except JDownloaderError as e:
-            self.edit_text(f"❌ {e}")
+            self.edit_text(format_safe_error_message(e, fallback="כשל בהוספת הקישור", prefix="❌ "))
             raise
         except Exception as e:
             msg = "❌ לא ניתן להוסיף את הקישור ל-JDownloader2."
