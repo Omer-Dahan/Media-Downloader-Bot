@@ -312,13 +312,50 @@ class YtDlpLogger:
         logging.error("[yt-dlp] %s", msg)
 
 
+class ClassifiedMessage(str):
+    """A string subclass tracking whether a message is classified and safe for user display."""
+    is_safe: bool = True
+
+    def __new__(cls, content: str, is_safe: bool = True):
+        obj = super().__new__(cls, content)
+        obj.is_safe = is_safe
+        return obj
+
+
+class ClassifiedDownloadError(ValueError):
+    """Exception for classified download errors safe for user display."""
+
+    def __init__(self, message: str, is_safe: bool = True):
+        super().__init__(message)
+        self.is_safe = is_safe
+
+
 def is_playlist_url(url: str) -> bool:
-    """Check if the URL is a playlist."""
-    if not url:
+    """Check if the URL is a playlist or channel (multi-item source)."""
+    if not url or not isinstance(url, str):
         return False
     try:
-        parsed = urlparse(url)
-        return "list=" in parsed.query or "/playlist" in parsed.path
+        normalized_url = url if "://" in url else f"https://{url}"
+        parsed = urlparse(normalized_url)
+        query = parsed.query or ""
+        path = parsed.path or ""
+
+        if "list=" in query:
+            return True
+        if path.startswith("/playlist") or "/playlist" in path:
+            return True
+
+        channel_prefixes = (
+            "/channel/",
+            "/@",
+            "/c/",
+            "/user/",
+        )
+        for prefix in channel_prefixes:
+            if path.startswith(prefix) or prefix in path:
+                return True
+
+        return False
     except Exception:
         return False
 
@@ -349,10 +386,10 @@ def get_gallery_dl_cmd() -> list[str]:
     return [sys.executable, "-m", "gallery_dl"]
 
 
-def classify_download_error(error_msg: str | None, url: str = "") -> str:
+def classify_download_error(error_msg: str | None, url: str = "") -> ClassifiedMessage:
     """Classify the error message into a human-readable Hebrew message with accurate cause."""
     if not error_msg:
-        return "ההורדה נכשלה: לא התקבל קובץ מדיה."
+        return ClassifiedMessage("ההורדה נכשלה: לא התקבל קובץ מדיה.", is_safe=True)
 
     err_lower = error_msg.lower()
 
@@ -368,14 +405,16 @@ def classify_download_error(error_msg: str | None, url: str = "") -> str:
         "login required",
         "http error 429",
     ]):
-        return (
-            "ההורדה מיוטיוב נחסמה (זיהוי בוט / נדרש אימות).\nיש לעדכן את קובץ ה-cookies בשרת או להמתין להסרת החסימה."
+        return ClassifiedMessage(
+            "ההורדה מיוטיוב נחסמה (זיהוי בוט / נדרש אימות).\nיש לעדכן את קובץ ה-cookies בשרת או להמתין להסרת החסימה.",
+            is_safe=True,
         )
 
     # Cookie specific errors
     if any(k in err_lower for k in ["cookie", "cookies"]) and not any(k in err_lower for k in ["not a bot"]):
-        return (
-            "שגיאת אימות מול יוטיוב: קובץ ה-cookies אינו תקין או שפג תוקפו.\nיש לרענן את קובץ ה-cookies בשרת."
+        return ClassifiedMessage(
+            "שגיאת אימות מול יוטיוב: קובץ ה-cookies אינו תקין או שפג תוקפו.\nיש לרענן את קובץ ה-cookies בשרת.",
+            is_safe=True,
         )
 
     # Private / unavailable / deleted video
@@ -388,7 +427,10 @@ def classify_download_error(error_msg: str | None, url: str = "") -> str:
         "members-only content",
         "who has blocked you",
     ]):
-        return "הסרטון אינו זמין (סרטון פרטי, נמחק, או דורש מנוי ערוץ)."
+        return ClassifiedMessage(
+            "הסרטון אינו זמין (סרטון פרטי, נמחק, או דורש מנוי ערוץ).",
+            is_safe=True,
+        )
 
     # Geo restriction
     if any(k in err_lower for k in [
@@ -398,11 +440,17 @@ def classify_download_error(error_msg: str | None, url: str = "") -> str:
         "blocked in your country",
         "georestricted",
     ]):
-        return "הסרטון חסום לצפייה במדינה שבה נמצא השרת (הגבלה גיאוגרפית)."
+        return ClassifiedMessage(
+            "הסרטון חסום לצפייה במדינה שבה נמצא השרת (הגבלה גיאוגרפית).",
+            is_safe=True,
+        )
 
     # Live stream
     if any(k in err_lower for k in ["שידור חי", "live stream"]):
-        return "לא ניתן להוריד שידור חי פעיל."
+        return ClassifiedMessage(
+            "לא ניתן להוריד שידור חי פעיל.",
+            is_safe=True,
+        )
 
     # Format issues
     if any(k in err_lower for k in [
@@ -410,13 +458,22 @@ def classify_download_error(error_msg: str | None, url: str = "") -> str:
         "no video formats found",
         "format not available",
     ]):
-        return "ההורדה נכשלה: הפורמט המבוקש אינו זמין עבור סרטון זה."
+        return ClassifiedMessage(
+            "ההורדה נכשלה: הפורמט המבוקש אינו זמין עבור סרטון זה.",
+            is_safe=True,
+        )
 
     # General extraction errors where yt-dlp might actually be outdated
     if is_extraction_error(error_msg):
-        return f"שגיאה בחילוץ המידע מהקישור. ייתכן ש-yt-dlp דורש עדכון: {error_msg[:120]}"
+        return ClassifiedMessage(
+            "שגיאה בחילוץ המידע מהקישור. ייתכן ש-yt-dlp דורש עדכון.",
+            is_safe=True,
+        )
 
-    return f"ההורדה נכשלה: {error_msg[:150]}"
+    return ClassifiedMessage(
+        f"ההורדה נכשלה: {error_msg[:150]}",
+        is_safe=False,
+    )
 
 
 class YoutubeDownload(BaseDownloader):
@@ -940,7 +997,9 @@ class YoutubeDownload(BaseDownloader):
 
             if not files:
                 error_desc = classify_download_error(self._last_download_error, self._url)
-                raise ValueError(error_desc)
+                raise ClassifiedDownloadError(
+                    str(error_desc), is_safe=getattr(error_desc, "is_safe", False)
+                )
             self._upload()
         except NetworkError as e:
             # Network error - show resume button

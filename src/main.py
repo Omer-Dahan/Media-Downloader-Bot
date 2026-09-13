@@ -64,7 +64,7 @@ from engine import (
 )
 from engine.base import cancellation_events, _resume_state_cache
 from engine.concurrency import concurrency_manager
-from engine.generic import check_and_send_update_notification, auto_update_ytdlp
+from engine.generic import check_and_send_update_notification, auto_update_ytdlp, is_playlist_url, ClassifiedDownloadError
 from utils import (
     extract_url_and_name,
     is_youtube,
@@ -492,7 +492,7 @@ def torrent_command_handler(client: Client, message: types.Message):
 
 
 def check_link(url: str, uid: int = None):
-    if re.findall(r"^https://(www\.)?youtube\.com/channel/", url) or "list" in url:
+    if is_playlist_url(url):
         # Playlist/channel allowed for all users with credits
         if uid is not None:
             total_credits = get_total_credits(uid)
@@ -503,6 +503,43 @@ def check_link(url: str, uid: int = None):
 
     if not M3U8_SUPPORT and (re.findall(r"m3u8|\.m3u8|\.m3u$", url.lower())):
         return "קישורי m3u8 מושבתים."
+
+
+GENERIC_ERROR_MESSAGE = (
+    "❌ לא הצלחתי להוריד את הקישור הזה כרגע.\n"
+    "נסה שוב עוד מעט או שלח קישור אחר."
+)
+
+KNOWN_SAFE_SUBSTRINGS = (
+    "הסרטון אינו זמין",
+    "זיהוי בוט",
+    "קובץ ה-cookies",
+    "הגבלה גיאוגרפית",
+    "שידור חי",
+    "הפורמט המבוקש אינו זמין",
+    "ההורדה בוטלה",
+    "שגיאה בחילוץ המידע",
+    "הורדות פעילות במקביל",
+)
+
+
+def get_user_friendly_error_message(e: Exception) -> str:
+    """Return a safe user-facing error message if classified, or generic message otherwise."""
+    # Explicitly safe classified download errors
+    if isinstance(e, ClassifiedDownloadError) and getattr(e, "is_safe", False):
+        msg = str(e)
+        return msg if msg.startswith("❌") else f"❌ {msg}"
+
+    if getattr(e, "is_safe", False) is True:
+        msg = str(e)
+        return msg if msg.startswith("❌") else f"❌ {msg}"
+
+    err_str = str(e)
+    # Check against known safe user-facing strings
+    if any(phrase in err_str for phrase in KNOWN_SAFE_SUBSTRINGS):
+        return err_str if err_str.startswith("❌") else f"❌ {err_str}"
+
+    return GENERIC_ERROR_MESSAGE
 
 
 def send_no_credits_message(message: types.Message):
@@ -704,23 +741,11 @@ def download_handler(client: Client, message: types.Message):
         send_no_credits_message(message)
     except BandwidthExhaustedException as e:
         message.reply_text(str(e), quote=True)
-    except ValueError as e:
-        if not is_shutting_down():
-            report_error_to_archive(client, message.from_user, url, e)
-            message.reply_text(str(e), quote=True)
     except Exception as e:
         if not is_shutting_down():
             report_error_to_archive(client, message.from_user, url, e)
             logging.error("Download failed", exc_info=True)
-            error_text = str(e)
-            if error_text and not any(k in error_text for k in ["Traceback", "object at 0x", "NoneType"]):
-                message.reply_text(f"❌ {error_text}", quote=True)
-            else:
-                message.reply_text(
-                    "❌ לא הצלחתי להוריד את הקישור הזה כרגע.\n"
-                    "נסה שוב עוד מעט או שלח קישור אחר.",
-                    quote=True,
-                )
+            message.reply_text(get_user_friendly_error_message(e), quote=True)
     finally:
         end_request_log()
         # Release the concurrency slot. For the YouTube menu path this is correct
@@ -1074,25 +1099,12 @@ def youtube_quality_callback(client: Client, callback_query: types.CallbackQuery
         )
     except BandwidthExhaustedException as e:
         callback_query.message.edit_text(str(e))
-    except ValueError as e:
-        if not is_shutting_down():
-            user = callback_query.from_user
-            report_error_to_archive(client, user, url, e)
-            callback_query.message.edit_text(f"❌ {e}")
     except Exception as e:
         if not is_shutting_down():
-            # Get user for error reporting
             user = callback_query.from_user
             report_error_to_archive(client, user, url, e)
             logging.error("Download failed", exc_info=True)
-            error_text = str(e)
-            if error_text and not any(k in error_text for k in ["Traceback", "object at 0x", "NoneType"]):
-                callback_query.message.edit_text(f"❌ {error_text}")
-            else:
-                callback_query.message.edit_text(
-                    "❌ לא הצלחתי להוריד את הקישור הזה כרגע.\n"
-                    "נסה שוב עוד מעט או שלח קישור אחר."
-                )
+            callback_query.message.edit_text(get_user_friendly_error_message(e))
     finally:
         end_request_log()
         concurrency_manager.release(chat_id)

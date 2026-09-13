@@ -66,11 +66,35 @@ def test_classify_download_error_format_not_available():
 
 
 def test_is_playlist_url():
-    """Verify playlist detection based on query params and path."""
+    """Verify multi-item source detection covering playlists, channels, handles, and custom URLs."""
+    # Playlists
     assert is_playlist_url("https://www.youtube.com/playlist?list=PL12345") is True
     assert is_playlist_url("https://www.youtube.com/watch?v=abc&list=PL12345") is True
+    assert is_playlist_url("https://youtu.be/abc?list=PL12345") is True
+    assert is_playlist_url("https://www.youtube.com/playlist") is True
+
+    # Channels
+    assert is_playlist_url("https://www.youtube.com/channel/UC123456789") is True
+    assert is_playlist_url("https://www.youtube.com/channel/UC123456789/videos") is True
+
+    # Handles
+    assert is_playlist_url("https://www.youtube.com/@some_creator") is True
+    assert is_playlist_url("https://www.youtube.com/@some_creator/videos") is True
+    assert is_playlist_url("https://www.youtube.com/@some_creator/shorts") is True
+
+    # Custom and user URLs
+    assert is_playlist_url("https://www.youtube.com/c/CreatorName") is True
+    assert is_playlist_url("https://www.youtube.com/c/CreatorName/videos") is True
+    assert is_playlist_url("https://www.youtube.com/user/CreatorName") is True
+    assert is_playlist_url("https://www.youtube.com/user/CreatorName/videos") is True
+    assert is_playlist_url("youtube.com/@creator") is True
+
+    # Single videos (must NOT be treated as playlists)
     assert is_playlist_url("https://youtu.be/iL686rbf82M?si=JVN5_9OfDeESOB_C") is False
+    assert is_playlist_url("https://www.youtube.com/watch?v=iL686rbf82M") is False
+    assert is_playlist_url("https://youtu.be/iL686rbf82M") is False
     assert is_playlist_url("") is False
+    assert is_playlist_url(None) is False
 
 
 def test_ytdlp_logger_captures_errors_and_warnings():
@@ -227,3 +251,251 @@ def test_unrecoverable_youtube_error_skips_jdownloader_fallback_standard_entranc
             mock_jd.assert_not_called()
             bot_msg.edit_text.assert_called_once()
             assert "הסרטון אינו זמין" in bot_msg.edit_text.call_args[0][0]
+
+
+def test_check_link_consistency_for_playlists_and_channels():
+    """Verify check_link uses the unified is_playlist_url truth source for channels and playlists."""
+    from main import check_link
+
+    with patch("main.get_total_credits", return_value=0):
+        # Channel URLs blocked without credits
+        assert check_link("https://www.youtube.com/channel/UC12345", uid=1) == "PLAYLIST_NO_CREDITS"
+        assert check_link("https://www.youtube.com/@my_handle", uid=1) == "PLAYLIST_NO_CREDITS"
+        assert check_link("https://www.youtube.com/c/ChannelName", uid=1) == "PLAYLIST_NO_CREDITS"
+        assert check_link("https://www.youtube.com/user/UserName/videos", uid=1) == "PLAYLIST_NO_CREDITS"
+        assert check_link("https://www.youtube.com/playlist?list=PL123", uid=1) == "PLAYLIST_NO_CREDITS"
+
+    with patch("main.get_total_credits", return_value=5):
+        # Channel and playlist URLs allowed with credits
+        assert check_link("https://www.youtube.com/channel/UC12345", uid=1) is None
+        assert check_link("https://www.youtube.com/@my_handle", uid=1) is None
+        assert check_link("https://www.youtube.com/c/ChannelName", uid=1) is None
+        assert check_link("https://www.youtube.com/user/UserName/videos", uid=1) is None
+        assert check_link("https://www.youtube.com/playlist?list=PL123", uid=1) is None
+
+
+def test_youtube_ignoreerrors_distinguishes_multi_item_from_single_video():
+    """Verify multi-item URLs use ignoreerrors='only_download' while single videos use False."""
+    client = MagicMock()
+    bot_msg = MagicMock()
+    bot_msg.chat.id = 12345
+    bot_msg.chat.type = "private"
+    bot_msg.id = 100
+
+    captured_opts = {}
+
+    def fake_ydl(opts=None):
+        captured_opts.clear()
+        if opts:
+            captured_opts.update(opts)
+        mock_ctx = MagicMock()
+        mock_ctx.__enter__.return_value = mock_ctx
+        mock_ctx.__exit__.return_value = False
+        mock_ctx.download.return_value = 0
+        return mock_ctx
+
+    # 1. Multi-item URL (channel) -> ignoreerrors must be 'only_download'
+    channel_url = "https://www.youtube.com/@creator/videos"
+    dl_channel = YoutubeDownload(client, bot_msg, channel_url)
+    with patch("engine.generic.yt_dlp.YoutubeDL", side_effect=fake_ydl):
+        try:
+            dl_channel._download(["best"])
+        except Exception:
+            pass
+    assert captured_opts.get("ignoreerrors") == "only_download"
+
+    # 2. Multi-item URL (playlist) -> ignoreerrors must be 'only_download'
+    playlist_url = "https://www.youtube.com/playlist?list=PL98765"
+    dl_playlist = YoutubeDownload(client, bot_msg, playlist_url)
+    with patch("engine.generic.yt_dlp.YoutubeDL", side_effect=fake_ydl):
+        try:
+            dl_playlist._download(["best"])
+        except Exception:
+            pass
+    assert captured_opts.get("ignoreerrors") == "only_download"
+
+    # 3. Single video URL -> ignoreerrors must be False so errors fail clearly
+    single_url = "https://www.youtube.com/watch?v=iL686rbf82M"
+    dl_single = YoutubeDownload(client, bot_msg, single_url)
+    with patch("engine.generic.yt_dlp.YoutubeDL", side_effect=fake_ydl):
+        try:
+            dl_single._download(["best"])
+        except Exception:
+            pass
+    assert captured_opts.get("ignoreerrors") is False
+
+
+def test_jdownloader_waiting_in_queue_with_active_downloads_not_killed():
+    """Verify that a package waiting in queue while other packages download is not killed."""
+    client = MagicMock()
+    bot_msg = MagicMock()
+    bot_msg.chat.id = 12345
+    bot_msg.id = 100
+
+    dl = JDownloaderDownload(client, bot_msg, "https://example.com/file")
+    dl._manager = MagicMock()
+    dl._package_name = "TGBot_12345_test"
+
+    # Status returns waiting with active_downloads = 1 on the device
+    dl._manager.get_status.return_value = {
+        "state": "waiting",
+        "speed": 0,
+        "downloaded": 0,
+        "total": 1000,
+        "progress": 0.0,
+        "status_text": "Waiting in queue",
+        "name": "test_pkg",
+        "active_downloads": 1,
+    }
+
+    # Simulate elapsed time beyond timeout
+    dl._stall_start = time.time() - 1000
+    with patch("engine.jdownloader.JDOWNLOADER_STALL_TIMEOUT", 10):
+        # Because active_downloads > 0, poll progress must reset stall timer and NOT raise
+        assert dl._poll_progress() is False
+        assert dl._stall_start == 0
+
+
+def test_jdownloader_manager_calculates_active_downloads():
+    """Verify JDownloaderManager computes active_downloads from other packages."""
+    mgr = JDownloaderManager.__new__(JDownloaderManager)
+    mgr._device = MagicMock()
+
+    our_pkg = {
+        "name": "our_pkg",
+        "saveTo": str(Path("/tmp/downloads") / "TGBot_our_pkg"),
+        "status": "Waiting in queue",
+        "finished": False,
+        "running": False,
+        "bytesLoaded": 0,
+        "bytesTotal": 1000,
+        "speed": 0,
+    }
+
+    active_pkg = {
+        "name": "other_pkg",
+        "saveTo": str(Path("/tmp/downloads") / "TGBot_other_pkg"),
+        "status": "Downloading",
+        "finished": False,
+        "running": True,
+        "bytesLoaded": 500,
+        "bytesTotal": 1000,
+        "speed": 50000,
+    }
+
+    mgr._device.downloads.query_packages.return_value = [our_pkg, active_pkg]
+
+    with patch("engine.jdownloader_manager.JDOWNLOADER_DOWNLOAD_DIR", "/tmp/downloads"):
+        status = mgr.get_status("TGBot_our_pkg")
+
+    assert status["state"] == "waiting"
+    assert status.get("active_downloads") == 1
+
+
+def test_user_error_message_sanitization_and_no_path_leak():
+    """Verify get_user_friendly_error_message displays classified messages but redacts raw errors."""
+    from main import get_user_friendly_error_message, GENERIC_ERROR_MESSAGE
+    from engine.generic import ClassifiedDownloadError
+
+    # 1. Classified safe error
+    safe_err = ClassifiedDownloadError("הסרטון אינו זמין (סרטון פרטי, נמחק, או דורש מנוי ערוץ).", is_safe=True)
+    msg = get_user_friendly_error_message(safe_err)
+    assert "הסרטון אינו זמין" in msg
+    assert msg.startswith("❌")
+
+    # 2. Classified safe error - bot detection
+    safe_bot = ClassifiedDownloadError("ההורדה מיוטיוב נחסמה (זיהוי בוט / נדרש אימות).", is_safe=True)
+    msg_bot = get_user_friendly_error_message(safe_bot)
+    assert "זיהוי בוט" in msg_bot
+
+    # 3. Unclassified ClassifiedDownloadError
+    unclassified_err = ClassifiedDownloadError("ההורדה נכשלה: some internal failure", is_safe=False)
+    assert get_user_friendly_error_message(unclassified_err) == GENERIC_ERROR_MESSAGE
+
+    # 4. Raw file system path exception
+    leak_err = FileNotFoundError("/home/vm/projects/media-downloader-bot/secret_cookie.txt not found")
+    msg_leak = get_user_friendly_error_message(leak_err)
+    assert msg_leak == GENERIC_ERROR_MESSAGE
+    assert "/home/vm" not in msg_leak
+
+    # 5. Database connection exception
+    db_err = Exception("psycopg2.OperationalError: server closed the connection unexpectedly at /var/run/postgresql")
+    msg_db = get_user_friendly_error_message(db_err)
+    assert msg_db == GENERIC_ERROR_MESSAGE
+    assert "postgresql" not in msg_db
+
+    # 6. Internal python ValueError
+    val_err = ValueError("invalid literal for int() with base 10: 'invalid_id'")
+    msg_val = get_user_friendly_error_message(val_err)
+    assert msg_val == GENERIC_ERROR_MESSAGE
+    assert "invalid literal" not in msg_val
+
+    # 7. User cancellation ValueError is preserved
+    cancel_err = ValueError("ההורדה בוטלה על ידי המשתמש 🛑")
+    msg_cancel = get_user_friendly_error_message(cancel_err)
+    assert "ההורדה בוטלה על ידי המשתמש" in msg_cancel
+
+
+def test_jdownloader_temporary_limit_or_problem_does_not_fail():
+    """Verify JDownloaderManager does not treat temporary limit/problem messages as fatal errors."""
+    mgr = JDownloaderManager.__new__(JDownloaderManager)
+    mgr._device = MagicMock()
+
+    temporary_statuses = [
+        "Download limit reached, wait 15 min",
+        "Connection problem, retrying in 30s",
+        "Temporarily blocked by host, retry in 5m",
+        "IP limit reached: countdown 10:00",
+    ]
+
+    for temp_status in temporary_statuses:
+        mock_pkg = {
+            "name": "pkg_temp",
+            "saveTo": str(Path("/tmp/downloads") / "TGBot_temp"),
+            "status": temp_status,
+            "finished": False,
+            "running": False,
+            "bytesLoaded": 0,
+            "bytesTotal": 1000,
+            "speed": 0,
+        }
+        mgr._device.downloads.query_packages.return_value = [mock_pkg]
+
+        with patch("engine.jdownloader_manager.JDOWNLOADER_DOWNLOAD_DIR", "/tmp/downloads"):
+            status = mgr.get_status("TGBot_temp")
+
+        # Must NOT be marked as error; must remain waiting
+        assert status["state"] == "waiting", f"Failed for status: {temp_status}"
+        assert status.get("error", "") == ""
+
+
+def test_jdownloader_fatal_error_keywords_still_fail():
+    """Verify JDownloaderManager detects actual fatal errors."""
+    mgr = JDownloaderManager.__new__(JDownloaderManager)
+    mgr._device = MagicMock()
+
+    fatal_statuses = [
+        "Plugin defect: YouTube extractor broken",
+        "Offline: File was removed",
+        "Download failed (CRC checksum mismatch)",
+        "Account missing: Premium required",
+    ]
+
+    for fatal_status in fatal_statuses:
+        mock_pkg = {
+            "name": "pkg_fatal",
+            "saveTo": str(Path("/tmp/downloads") / "TGBot_fatal"),
+            "status": fatal_status,
+            "finished": False,
+            "running": False,
+            "bytesLoaded": 0,
+            "bytesTotal": 1000,
+            "speed": 0,
+        }
+        mgr._device.downloads.query_packages.return_value = [mock_pkg]
+
+        with patch("engine.jdownloader_manager.JDOWNLOADER_DOWNLOAD_DIR", "/tmp/downloads"):
+            status = mgr.get_status("TGBot_fatal")
+
+        assert status["state"] == "error", f"Failed for status: {fatal_status}"
+        assert status["error"] == fatal_status

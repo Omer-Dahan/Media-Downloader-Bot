@@ -196,6 +196,7 @@ class JDownloaderDownload(BaseDownloader):
         # Check stall in both downloading (zero speed) and waiting (not starting) states
         speed = status.get("speed", 0)
         downloaded = status.get("downloaded", 0)
+        other_active = status.get("active_downloads", 0)
 
         if not hasattr(self, "_last_downloaded_bytes"):
             self._last_downloaded_bytes = downloaded
@@ -203,7 +204,11 @@ class JDownloaderDownload(BaseDownloader):
         has_progress = (speed > 0) or (downloaded > self._last_downloaded_bytes)
         self._last_downloaded_bytes = downloaded
 
-        if not has_progress and state in ("downloading", "waiting"):
+        # If package is waiting in queue while other packages are actively downloading on the device,
+        # it is legitimately queued. Reset stall timer so it is not killed prematurely.
+        if state == "waiting" and other_active > 0:
+            self._stall_start = 0
+        elif not has_progress and state in ("downloading", "waiting"):
             if self._stall_start == 0:
                 self._stall_start = time.time()
             elif time.time() - self._stall_start > JDOWNLOADER_STALL_TIMEOUT:

@@ -108,7 +108,12 @@ JDOWNLOADER_EXE_PATH = get_env(
 JDOWNLOADER_POLL_INTERVAL = get_env(
     "JDOWNLOADER_POLL_INTERVAL", 5
 )  # Seconds between checks
-JDOWNLOADER_STALL_TIMEOUT = get_env("JDOWNLOADER_STALL_TIMEOUT", 300)  # 5 minutes
+# Stall timeout in seconds: maximum time a package may remain without progress
+# before being aborted. If a package is waiting in queue while other packages
+# are actively downloading on the device, the stall timer does not tick.
+# Only triggers when actively downloading with zero progress, or waiting with no
+# other active downloads on the device.
+JDOWNLOADER_STALL_TIMEOUT = get_env("JDOWNLOADER_STALL_TIMEOUT", 600)  # 10 minutes
 JDOWNLOADER_GLOBAL_TIMEOUT = get_env("JDOWNLOADER_GLOBAL_TIMEOUT", 7200)  # 2 hours
 JDOWNLOADER_MAX_PER_USER = get_env("JDOWNLOADER_MAX_PER_USER", 1)
 JDOWNLOADER_MAX_GLOBAL = get_env("JDOWNLOADER_MAX_GLOBAL", 3)

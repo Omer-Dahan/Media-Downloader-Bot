@@ -45,6 +45,7 @@ class JDownloaderConnectionError(JDownloaderError):
 
 class JDownloaderConcurrencyError(JDownloaderError):
     """Concurrency limit exceeded."""
+    is_safe: bool = True
 
 
 class JDownloaderManager:
@@ -489,14 +490,26 @@ class JDownloaderManager:
                     break
 
             if pkg is None:
+                # Count other active downloads on device
+                active_downloads = sum(
+                    1 for p in packages
+                    if p.get("running", False) or (p.get("speed", 0) or 0) > 0
+                )
                 # Might still be moving from linkgrabber to downloads list
                 return {
                     "state": "waiting", 
                     "error": "", 
                     "progress": 0.0, 
                     "speed": 0, 
-                    "name": package_name
+                    "name": package_name,
+                    "active_downloads": active_downloads,
                 }
+
+            # Count other packages currently active or downloading on the device
+            active_downloads = sum(
+                1 for p in packages
+                if p is not pkg and (p.get("running", False) or (p.get("speed", 0) or 0) > 0)
+            )
 
             total = pkg.get("bytesTotal", 0) or 0
             downloaded = pkg.get("bytesLoaded", 0) or 0
@@ -507,34 +520,38 @@ class JDownloaderManager:
             status_text = pkg.get("status", "")
             name = pkg.get("name", "Unknown")
 
-            # Check for error in package status
+            # Check for fatal error in package status
             if status_text:
                 status_text_lower = status_text.lower()
-                error_keywords = (
-                    "error",
-                    "defect",
-                    "failed",
-                    "offline",
-                    "captcha",
-                    "plugin",
-                    "problem",
-                    "blocked",
-                    "expired",
-                    "account missing",
-                    "limit",
+                is_temporary = any(
+                    temp in status_text_lower
+                    for temp in ("wait", "retry", "reconnect", "countdown", "temporary", "limit")
                 )
-                if any(k in status_text_lower for k in error_keywords):
-                    return {
-                        "progress": 0.0,
-                        "speed": 0,
-                        "eta": -1,
-                        "state": "error",
-                        "error": status_text,
-                        "downloaded": downloaded,
-                        "total": total,
-                        "name": name,
-                        "status_text": status_text,
-                    }
+                if not is_temporary:
+                    fatal_error_keywords = (
+                        "fatal error",
+                        "plugin defect",
+                        "download failed",
+                        "failed",
+                        "offline",
+                        "file not found",
+                        "expired",
+                        "account missing",
+                        "captcha",
+                    )
+                    if any(k in status_text_lower for k in fatal_error_keywords):
+                        return {
+                            "progress": 0.0,
+                            "speed": 0,
+                            "eta": -1,
+                            "state": "error",
+                            "error": status_text,
+                            "downloaded": downloaded,
+                            "total": total,
+                            "name": name,
+                            "status_text": status_text,
+                            "active_downloads": active_downloads,
+                        }
 
             if finished:
                 progress = 100.0
@@ -564,31 +581,41 @@ class JDownloaderManager:
                             for lnk in links:
                                 lnk_status = (lnk.get("status") or "").lower()
                                 lnk_error = (lnk.get("error") or "").lower()
-                                for err_k in (
-                                    "error",
-                                    "defect",
-                                    "failed",
-                                    "offline",
-                                    "captcha",
-                                    "blocked",
-                                ):
-                                    if err_k in lnk_status or err_k in lnk_error:
-                                        err_msg = (
-                                            lnk.get("status")
-                                            or lnk.get("error")
-                                            or "שגיאת קישור ב-JDownloader"
-                                        )
-                                        return {
-                                            "progress": 0.0,
-                                            "speed": 0,
-                                            "eta": -1,
-                                            "state": "error",
-                                            "error": err_msg,
-                                            "downloaded": downloaded,
-                                            "total": total,
-                                            "name": name,
-                                            "status_text": status_text or err_msg,
-                                        }
+                                combined_lnk = f"{lnk_status} {lnk_error}"
+                                is_lnk_temporary = any(
+                                    temp in combined_lnk
+                                    for temp in ("wait", "retry", "reconnect", "countdown", "temporary", "limit")
+                                )
+                                if not is_lnk_temporary:
+                                    fatal_link_keywords = (
+                                        "fatal error",
+                                        "plugin defect",
+                                        "failed",
+                                        "offline",
+                                        "file not found",
+                                        "expired",
+                                        "account missing",
+                                        "captcha",
+                                    )
+                                    for err_k in fatal_link_keywords:
+                                        if err_k in combined_lnk:
+                                            err_msg = (
+                                                lnk.get("status")
+                                                or lnk.get("error")
+                                                or "שגיאת קישור ב-JDownloader"
+                                            )
+                                            return {
+                                                "progress": 0.0,
+                                                "speed": 0,
+                                                "eta": -1,
+                                                "state": "error",
+                                                "error": err_msg,
+                                                "downloaded": downloaded,
+                                                "total": total,
+                                                "name": name,
+                                                "status_text": status_text or err_msg,
+                                                "active_downloads": active_downloads,
+                                            }
                     except Exception:
                         pass
 
@@ -601,6 +628,7 @@ class JDownloaderManager:
                 "total": total,
                 "name": name,
                 "status_text": status_text,
+                "active_downloads": active_downloads,
             }
 
         except Exception as e:
