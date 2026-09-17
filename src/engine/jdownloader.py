@@ -14,6 +14,8 @@ import sys
 import threading
 from pathlib import Path
 
+import ffmpeg
+
 from config import (
     JDOWNLOADER_POLL_INTERVAL,
     JDOWNLOADER_STALL_TIMEOUT,
@@ -60,6 +62,7 @@ class JDownloaderDownload(BaseDownloader):
         self._start_time: float = 0
         self._last_speed: float = 0
         self._stall_start: float = 0
+        self._temp_merged_files: list[Path] = []
 
     def _download_subtitles_background(self):
         """Fetch subtitles using yt-dlp in the background while JD downloads video."""
@@ -226,23 +229,235 @@ class JDownloaderDownload(BaseDownloader):
 
         return False
 
+    def _probe_media_streams(self, file_path: Path) -> tuple[bool, bool]:
+        """
+        Check whether file contains video and/or audio streams using ffprobe.
+
+        Returns:
+            (has_video, has_audio)
+        """
+        try:
+            probe = ffmpeg.probe(str(file_path))
+            streams = probe.get("streams", [])
+            has_video = any(
+                s.get("codec_type") == "video"
+                and not bool(int(s.get("disposition", {}).get("attached_pic", 0) or 0))
+                for s in streams
+            )
+            has_audio = any(s.get("codec_type") == "audio" for s in streams)
+            return has_video, has_audio
+        except Exception as e:
+            err_details = getattr(e, "stderr", b"")
+            err_details = (
+                err_details.decode("utf-8", "ignore")
+                if isinstance(err_details, bytes)
+                else str(err_details)
+            )
+            logging.warning(
+                "ffprobe could not analyze %s: %s | %s",
+                file_path.name,
+                e,
+                err_details,
+            )
+            # Fallback based on extension if probe fails
+            audio_extensions = {
+                ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".weba", ".wma"
+            }
+            video_extensions = {
+                ".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv", ".m4v", ".ts", ".3gp"
+            }
+            ext = file_path.suffix.lower()
+            return ext in video_extensions, ext in audio_extensions
+
+    def _merge_video_audio(self, video_path: Path, audio_path: Path) -> Path:
+        """
+        Merge separate video-only and audio-only files into a single container using ffmpeg -c copy.
+
+        Returns:
+            Path to merged media file
+        """
+        output_path = video_path.parent / f"{video_path.stem}_merged{video_path.suffix}"
+        logging.info(
+            "Merging video '%s' and audio '%s' into '%s' using ffmpeg -c copy",
+            video_path.name,
+            audio_path.name,
+            output_path.name,
+        )
+
+        try:
+            (
+                ffmpeg.output(
+                    ffmpeg.input(str(video_path)),
+                    ffmpeg.input(str(audio_path)),
+                    str(output_path),
+                    c="copy",
+                )
+                .overwrite_output()
+                .run(quiet=True)
+            )
+        except ffmpeg.Error as e:
+            err_details = getattr(e, "stderr", b"")
+            err_details = (
+                err_details.decode("utf-8", "ignore")
+                if isinstance(err_details, bytes)
+                else str(err_details)
+            )
+            logging.warning(
+                "ffmpeg copy merge to %s failed: %s | %s. Retrying with .mkv container.",
+                output_path.suffix,
+                e,
+                err_details,
+            )
+            output_path.unlink(missing_ok=True)
+            output_path = video_path.parent / f"{video_path.stem}_merged.mkv"
+            try:
+                (
+                    ffmpeg.output(
+                        ffmpeg.input(str(video_path)),
+                        ffmpeg.input(str(audio_path)),
+                        str(output_path),
+                        c="copy",
+                    )
+                    .overwrite_output()
+                    .run(quiet=True)
+                )
+            except ffmpeg.Error as e2:
+                err_details2 = getattr(e2, "stderr", b"")
+                err_details2 = (
+                    err_details2.decode("utf-8", "ignore")
+                    if isinstance(err_details2, bytes)
+                    else str(err_details2)
+                )
+                output_path.unlink(missing_ok=True)
+                logging.error(
+                    "ffmpeg copy merge to .mkv failed: %s | %s", e2, err_details2
+                )
+                raise JDownloaderError(f"מיזוג הוידאו והאודיו נכשל: {e2}") from e2
+
+        self._temp_merged_files.append(output_path)
+
+        # Delete unmerged source files to free up disk space immediately
+        try:
+            video_path.unlink(missing_ok=True)
+            audio_path.unlink(missing_ok=True)
+            logging.info(
+                "Deleted unmerged source components: %s, %s",
+                video_path.name,
+                audio_path.name,
+            )
+        except Exception as e:
+            logging.warning("Failed to delete unmerged source components: %s", e)
+
+        return output_path
+
     def _handle_output(self, output_path: Path) -> list[Path]:
         """
         Prepare output for upload.
-        
+
+        Inspects package files using ffprobe:
+        - Single file with both video and audio: uploaded as is.
+        - Video-only and audio-only files: merged into a single file with ffmpeg -c copy.
+        - Video-only or audio-only file without counterpart: uploaded with a warning log.
+        - Preserves subtitle files.
+
         Returns:
             List of file paths ready for upload
         """
         if output_path.is_dir():
-            files = list(output_path.rglob("*"))
-            files = [f for f in files if f.is_file()]
+            all_files = [f for f in output_path.rglob("*") if f.is_file()]
+            files = [
+                f for f in all_files if f.suffix.lower() not in {".part", ".tmp"}
+            ]
+            if not files and all_files:
+                files = all_files
 
             if not files:
                 raise JDownloaderError("לא נמצאו קבצים בתיקיית ההורדה")
+        else:
+            files = [output_path]
 
-            return files
+        logging.info(
+            "Found %d file(s) in JDownloader package '%s': %s",
+            len(files),
+            self._package_name or output_path.name,
+            [f.name for f in files],
+        )
 
-        return [output_path]
+        subtitle_extensions = {".srt", ".vtt", ".ass", ".sub"}
+        subtitle_files = [f for f in files if f.suffix.lower() in subtitle_extensions]
+        media_candidates = [
+            f for f in files if f.suffix.lower() not in subtitle_extensions
+        ]
+
+        if not media_candidates:
+            logging.info(
+                "No media files found in package, returning subtitle files: %s",
+                [f.name for f in subtitle_files],
+            )
+            return subtitle_files
+
+        # Probe media files to detect video and audio streams
+        probed_files: list[tuple[Path, bool, bool]] = []
+        for mf in media_candidates:
+            has_v, has_a = self._probe_media_streams(mf)
+            logging.info(
+                "Probed package file '%s': video=%s, audio=%s",
+                mf.name,
+                has_v,
+                has_a,
+            )
+            probed_files.append((mf, has_v, has_a))
+
+        both = [f for f, v, a in probed_files if v and a]
+        video_only = [f for f, v, a in probed_files if v and not a]
+        audio_only = [f for f, v, a in probed_files if a and not v]
+
+        final_media: list[Path] = []
+
+        if both:
+            logging.info(
+                "Package contains complete media file with video and audio: %s",
+                both[0].name,
+            )
+            final_media = [both[0]]
+        elif video_only and audio_only:
+            merged = self._merge_video_audio(video_only[0], audio_only[0])
+            logging.info(
+                "Merged video '%s' and audio '%s' into '%s'",
+                video_only[0].name,
+                audio_only[0].name,
+                merged.name,
+            )
+            final_media = [merged]
+        elif video_only:
+            logging.warning(
+                "Package '%s' contains video-only file '%s' without audio stream. Uploading video without sound.",
+                self._package_name or output_path.name,
+                video_only[0].name,
+            )
+            final_media = [video_only[0]]
+        elif audio_only:
+            logging.warning(
+                "Package '%s' contains audio-only file '%s' without video stream. Uploading audio only.",
+                self._package_name or output_path.name,
+                audio_only[0].name,
+            )
+            final_media = [audio_only[0]]
+        else:
+            logging.warning(
+                "Package '%s': No standard audio/video streams recognized in files: %s",
+                self._package_name or output_path.name,
+                [f.name for f in media_candidates],
+            )
+            final_media = [media_candidates[0]]
+
+        upload_list = final_media + subtitle_files
+        logging.info(
+            "Final files prepared for upload for package '%s': %s",
+            self._package_name or output_path.name,
+            [f.name for f in upload_list],
+        )
+        return upload_list
 
     def _start(self):
         """Main JDownloader download flow."""
@@ -293,6 +508,7 @@ class JDownloaderDownload(BaseDownloader):
 
         # Wrap everything in try/finally to ensure cleanup
         _download_succeeded = False
+        output_path: Path | None = None
         try:
             # 4. Poll progress
             while True:
@@ -323,7 +539,7 @@ class JDownloaderDownload(BaseDownloader):
                     "לא נמצאו קבצים שהורדו. בדוק את תיקיית ההורדות של JDownloader."
                 )
 
-            # 6. Handle output (zip/split if needed)
+            # 6. Handle output (merge DASH streams if needed, zip/split)
             try:
                 files = self._handle_output(output_path)
             except Exception as e:
@@ -333,7 +549,7 @@ class JDownloaderDownload(BaseDownloader):
                 raise JDownloaderError("לא נמצאו קבצים להעלאה.")
 
             # 7. Build metadata from the actual file (get_metadata() searches self._tempdir
-            #    which is empty for JDownloader — the file lives in JDOWNLOADER_DOWNLOAD_DIR)
+            #    which is empty for JDownloader: the file lives in JDOWNLOADER_DOWNLOAD_DIR)
             primary_file = files[0]
             meta = self._extract_video_metadata(primary_file)
             # Build caption using the filename as title (no _video_title set for JD downloads)
@@ -342,7 +558,10 @@ class JDownloaderDownload(BaseDownloader):
             audio_extensions = {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac"}
             is_audio = primary_file.suffix.lower() in audio_extensions
 
-            title = primary_file.stem[: self._title_length]
+            title = primary_file.stem
+            if title.endswith("_merged"):
+                title = title[:-7]
+            title = title[: self._title_length]
             duration_minutes = int(meta["duration"]) // 60
             duration_seconds = int(meta["duration"]) % 60
             duration_str = f"{duration_minutes}:{duration_seconds:02d} דקות"
@@ -366,10 +585,6 @@ class JDownloaderDownload(BaseDownloader):
                     f"צפייה מהנה 👀✨"
                 )
 
-            logging.info(
-                "JDownloader download complete - %d files to upload", len(files)
-            )
-
             # Combine JDownloader files with subtitles from tempdir
             upload_files = [str(f) for f in files]
             subtitle_extensions = {".srt", ".vtt", ".ass", ".sub"}
@@ -382,7 +597,15 @@ class JDownloaderDownload(BaseDownloader):
                 logging.info(
                     "Including %d background subtitles in upload", len(temp_subtitles)
                 )
-                upload_files.extend(temp_subtitles)
+                for ts in temp_subtitles:
+                    if ts not in upload_files:
+                        upload_files.append(ts)
+
+            logging.info(
+                "Final upload file(s) for package '%s': %s",
+                self._package_name or str(self._package_id),
+                [Path(f).name for f in upload_files],
+            )
 
             # 7.5 Release JDownloader slot early before starting the heavy upload
             try:
@@ -393,7 +616,13 @@ class JDownloaderDownload(BaseDownloader):
 
             self._upload(files=upload_files, meta=meta)
 
-            # 8. Cleanup from JDownloader and disk (success path - delete files)
+            logging.info(
+                "Upload completed successfully for package '%s' (%d file(s) uploaded)",
+                self._package_id,
+                len(upload_files),
+            )
+
+            # 8. Cleanup from JDownloader and disk (success path: delete files)
             _download_succeeded = True
             try:
                 self._manager.remove_download(
@@ -414,7 +643,6 @@ class JDownloaderDownload(BaseDownloader):
                         shutil.rmtree(output_path, ignore_errors=True)
                     else:
                         output_path.unlink(missing_ok=True)
-                        # Also try to remove the parent dir if it's empty
                         parent = output_path.parent
                         if parent.exists() and not any(parent.iterdir()):
                             parent.rmdir()
@@ -424,8 +652,18 @@ class JDownloaderDownload(BaseDownloader):
                         "Failed to manually delete files %s: %s", output_path, e
                     )
 
+            # Clean up temporary merged files
+            for mf in getattr(self, "_temp_merged_files", []):
+                try:
+                    p = Path(mf)
+                    if p.exists():
+                        p.unlink(missing_ok=True)
+                        logging.info("Deleted temporary merged file: %s", p)
+                except Exception as e:
+                    logging.warning("Failed to delete temporary merged file %s: %s", mf, e)
+
         finally:
-            # On failure/cancellation - remove the stalled/errored package from JDownloader queue
+            # On failure/cancellation: remove the stalled/errored package from JDownloader queue
             if (
                 not _download_succeeded
                 and self._manager
@@ -442,5 +680,28 @@ class JDownloaderDownload(BaseDownloader):
                     logging.warning(
                         "Failed to remove failed JD package from queue: %s", e
                     )
+
+            # Clean up temporary merged files on error/cancel
+            for mf in getattr(self, "_temp_merged_files", []):
+                try:
+                    p = Path(mf)
+                    if p.exists():
+                        p.unlink(missing_ok=True)
+                        logging.info("Cleaned up temporary merged file on exit: %s", p)
+                except Exception:
+                    pass
+
+            if not _download_succeeded and output_path and output_path.exists():
+                try:
+                    if output_path.is_dir():
+                        shutil.rmtree(output_path, ignore_errors=True)
+                    else:
+                        output_path.unlink(missing_ok=True)
+                        parent = output_path.parent
+                        if parent.exists() and not any(parent.iterdir()):
+                            parent.rmdir()
+                except Exception as e:
+                    logging.warning("Failed to clean up output files on exit: %s", e)
+
             # Always unregister to free concurrency slot
             JDownloaderManager._unregister_download(user_id, self._package_id)
