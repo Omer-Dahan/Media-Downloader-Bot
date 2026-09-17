@@ -1218,6 +1218,13 @@ if __name__ == "__main__":
     # Auto-update yt-dlp on every startup
     auto_update_ytdlp()
 
+    # Clean up old request logs on startup
+    try:
+        from engine.request_logger import cleanup_request_logs
+        cleanup_request_logs()
+    except Exception as e:
+        logging.warning("Failed to clean up request logs on startup: %s", e)
+
     banner = f"""
 ▌ ▌         ▀▛▘     ▌       ▛▀▖              ▜            ▌
 ▝▞  ▞▀▖ ▌ ▌  ▌  ▌ ▌ ▛▀▖ ▞▀▖ ▌ ▌ ▞▀▖ ▌  ▌ ▛▀▖ ▐  ▞▀▖ ▝▀▖ ▞▀▌

@@ -253,3 +253,65 @@ def test_cleanup_merged_files_on_error(jd_downloader, tmp_path):
         mf.unlink(missing_ok=True)
 
     assert not merged_file.exists()
+
+
+def test_package_multiple_both_files_logs_selected_and_dropped(jd_downloader, tmp_path, caplog):
+    """Verify package with multiple complete files logs the selected file and dropped files."""
+    pkg_dir = tmp_path / "pkg"
+    pkg_dir.mkdir()
+    f1 = pkg_dir / "full_video_1080p.mp4"
+    f2 = pkg_dir / "full_video_720p.mp4"
+    f1.write_bytes(b"vid1")
+    f2.write_bytes(b"vid2")
+
+    def mock_probe(path_str):
+        return {
+            "streams": [
+                {"codec_type": "video", "codec_name": "h264"},
+                {"codec_type": "audio", "codec_name": "aac"},
+            ]
+        }
+
+    with patch("ffmpeg.probe", side_effect=mock_probe), caplog.at_level(logging.INFO):
+        result = jd_downloader._handle_output(pkg_dir)
+
+    assert len(result) == 1
+    assert result[0] in (f1, f2)
+    selected_name = result[0].name
+    dropped_name = f2.name if selected_name == f1.name else f1.name
+    assert any(f"Selected '{selected_name}' for upload" in r.message for r in caplog.records)
+    assert any(f"dropped remaining: ['{dropped_name}']" in r.message for r in caplog.records)
+
+
+def test_package_multiple_video_and_audio_streams_logs_selected_and_dropped(jd_downloader, tmp_path, caplog):
+    """Verify package with multiple video and audio streams logs selected components and dropped components."""
+    pkg_dir = tmp_path / "pkg"
+    pkg_dir.mkdir()
+    v1 = pkg_dir / "video1.mp4"
+    v2 = pkg_dir / "video2.mp4"
+    a1 = pkg_dir / "audio1.m4a"
+    a2 = pkg_dir / "audio2.m4a"
+    for f in (v1, v2, a1, a2):
+        f.write_bytes(b"data")
+
+    def mock_probe(path_str):
+        filename = Path(path_str).name
+        if filename.startswith("video"):
+            return {"streams": [{"codec_type": "video"}]}
+        elif filename.startswith("audio"):
+            return {"streams": [{"codec_type": "audio"}]}
+        return {"streams": []}
+
+    mock_ffmpeg_output = MagicMock()
+    mock_ffmpeg_output.overwrite_output.return_value = mock_ffmpeg_output
+    mock_ffmpeg_output.run.return_value = (b"", b"")
+
+    with patch("ffmpeg.probe", side_effect=mock_probe), \
+         patch("ffmpeg.output", return_value=mock_ffmpeg_output), \
+         caplog.at_level(logging.INFO):
+        result = jd_downloader._handle_output(pkg_dir)
+
+    assert len(result) == 1
+    assert "_merged" in result[0].name
+    assert any("for merge; dropped remaining:" in r.message and "video" in r.message for r in caplog.records)
+    assert any("for merge; dropped remaining:" in r.message and "audio" in r.message for r in caplog.records)

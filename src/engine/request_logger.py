@@ -12,6 +12,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import time
 from contextvars import ContextVar
 from io import StringIO
 
@@ -142,6 +143,175 @@ def _redact_sensitive(text: str) -> str:
     return text
 
 
+def cleanup_request_logs(
+    log_dir: Path | str | None = None,
+    max_days: int | None = None,
+    max_files: int | None = None,
+    max_bytes: int | None = None,
+) -> list[Path]:
+    """
+    Clean up request log files according to age, count, and size retention limits.
+
+    - Deletes files older than max_days (default 14 days, configurable via REQUEST_LOG_MAX_DAYS).
+    - Deletes oldest files if remaining count exceeds max_files (configurable via REQUEST_LOG_MAX_FILES).
+    - Deletes oldest files if total directory size exceeds max_bytes (configurable via REQUEST_LOG_MAX_BYTES).
+    - Never touches bot.log or its rotated backups (bot.log.1, etc.).
+    - Logs each deleted file and total count/bytes freed.
+
+    Returns:
+        List of deleted Path objects.
+    """
+    if log_dir is None:
+        target_dir = Path(os.getenv("REQUEST_LOG_DIR") or "logs/requests")
+    else:
+        target_dir = Path(log_dir)
+
+    if not target_dir.exists() or not target_dir.is_dir():
+        return []
+
+    if max_days is None:
+        val = os.getenv("REQUEST_LOG_MAX_DAYS") or os.getenv("REQUEST_LOG_RETENTION_DAYS")
+        try:
+            max_days = int(val) if val is not None else 14
+        except (ValueError, TypeError):
+            max_days = 14
+
+    if max_files is None:
+        val = os.getenv("REQUEST_LOG_MAX_FILES") or os.getenv("REQUEST_LOG_MAX_COUNT")
+        try:
+            max_files = int(val) if val is not None else 1000
+        except (ValueError, TypeError):
+            max_files = 1000
+
+    if max_bytes is None:
+        val = os.getenv("REQUEST_LOG_MAX_BYTES") or os.getenv("REQUEST_LOG_MAX_SIZE")
+        try:
+            max_bytes = int(val) if val is not None else 100 * 1024 * 1024
+        except (ValueError, TypeError):
+            max_bytes = 100 * 1024 * 1024
+
+    def _is_protected(p: Path) -> bool:
+        name = p.name
+        bot_log_name = Path(os.getenv("LOG_FILE") or "logs/bot.log").name
+        if name == bot_log_name or name.startswith(f"{bot_log_name}."):
+            return True
+        if name == "bot.log" or name.startswith("bot.log."):
+            return True
+        if "bot.log" in name:
+            return True
+        return False
+
+    candidates = []
+    try:
+        for entry in target_dir.iterdir():
+            if not entry.is_file():
+                continue
+            if _is_protected(entry):
+                continue
+            if not entry.name.endswith(".log"):
+                continue
+            candidates.append(entry)
+    except Exception as e:
+        logging.warning("Failed to list request log directory %s: %s", target_dir, e)
+        return []
+
+    now = time.time()
+    deleted: list[Path] = []
+    total_freed_bytes = 0
+
+    def _get_file_time_and_size(p: Path) -> tuple[float, int]:
+        try:
+            st = p.stat()
+            ft = st.st_mtime
+            match = re.match(r"^(\d{8})_", p.name)
+            if match:
+                try:
+                    dt = datetime.strptime(match.group(1), "%Y%m%d")
+                    fn_ts = dt.timestamp()
+                    if fn_ts < ft:
+                        ft = fn_ts
+                except Exception:
+                    pass
+            return ft, st.st_size
+        except Exception:
+            return 0.0, 0
+
+    file_info = []
+    for f in candidates:
+        ft, sz = _get_file_time_and_size(f)
+        file_info.append((f, ft, sz))
+
+    survivors: list[tuple[Path, float, int]] = []
+    if max_days is not None and max_days >= 0:
+        cutoff_seconds = max_days * 86400
+        for f, ft, sz in file_info:
+            age_seconds = now - ft
+            if age_seconds > cutoff_seconds:
+                try:
+                    f.unlink()
+                    deleted.append(f)
+                    total_freed_bytes += sz
+                    logging.info(
+                        "Deleted expired request log '%s' (age: %.1f days, %d bytes)",
+                        f.name,
+                        age_seconds / 86400,
+                        sz,
+                    )
+                except Exception as e:
+                    logging.warning("Failed to delete expired request log %s: %s", f, e)
+            else:
+                survivors.append((f, ft, sz))
+    else:
+        survivors = file_info
+
+    # Sort survivors by timestamp ascending (oldest first)
+    survivors.sort(key=lambda item: item[1])
+
+    if max_files is not None and max_files >= 0 and len(survivors) > max_files:
+        to_remove_count = len(survivors) - max_files
+        to_delete = survivors[:to_remove_count]
+        survivors = survivors[to_remove_count:]
+        for f, ft, sz in to_delete:
+            try:
+                f.unlink()
+                deleted.append(f)
+                total_freed_bytes += sz
+                logging.info(
+                    "Deleted request log '%s' exceeding max_files ceiling (%d bytes)",
+                    f.name,
+                    sz,
+                )
+            except Exception as e:
+                logging.warning("Failed to delete excess request log %s: %s", f, e)
+
+    if max_bytes is not None and max_bytes >= 0:
+        current_bytes = sum(sz for _, _, sz in survivors)
+        while survivors and current_bytes > max_bytes:
+            f, ft, sz = survivors.pop(0)
+            try:
+                f.unlink()
+                deleted.append(f)
+                total_freed_bytes += sz
+                current_bytes -= sz
+                logging.info(
+                    "Deleted request log '%s' exceeding max_bytes ceiling (%d bytes)",
+                    f.name,
+                    sz,
+                )
+            except Exception as e:
+                logging.warning("Failed to delete excess request log %s: %s", f, e)
+
+    if deleted:
+        logging.info(
+            "Request log cleanup completed for %s: deleted %d file(s), freed %d bytes",
+            target_dir,
+            len(deleted),
+            total_freed_bytes,
+        )
+
+    return deleted
+
+
 def end_request_log() -> Path | None:
     """
     Clean up request log context by closing and clearing the current buffer.
@@ -178,4 +348,11 @@ def end_request_log() -> Path | None:
     # Reset context variables
     _request_context.set(None)
     _request_buffer.set(None)
+
+    # Run cleanup of request log directory
+    try:
+        cleanup_request_logs()
+    except Exception as e:
+        logging.warning("Request log cleanup failed: %s", e)
+
     return saved_path

@@ -5,16 +5,19 @@
 3. JDownloader media link preservation (video + audio) and junk filtering.
 """
 
+import asyncio
 from datetime import datetime
 import hashlib
 import logging
 from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pyrogram import Client
 
 from engine.base import ClassifiedDownloadError
 from engine.generic import (
@@ -28,8 +31,38 @@ from engine.request_logger import (
     end_request_log,
     get_request_log,
     format_request_log_filename,
+    cleanup_request_logs,
 )
-from main import get_user_friendly_error_message, report_error_to_archive
+from main import get_user_friendly_error_message, report_error_to_archive, app
+
+# Drain pyrogram Dispatcher background registration tasks created during main import
+if hasattr(app, "loop") and app.loop and not app.loop.is_closed():
+    _pending_tasks = [t for t in asyncio.all_tasks(app.loop) if not t.done()]
+    if _pending_tasks:
+        app.loop.run_until_complete(asyncio.gather(*_pending_tasks))
+
+
+class PyrogramClientMock(MagicMock):
+    """Spec-compliant mock for pyrogram.Client to prevent unspec'd attribute creation."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault(
+            "spec",
+            [
+                "send_message",
+                "send_document",
+                "send_video",
+                "send_audio",
+                "send_photo",
+                "send_animation",
+                "send_media_group",
+                "copy_message",
+                "edit_message_caption",
+                "send_chat_action",
+                "loop",
+            ],
+        )
+        super().__init__(*args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +190,7 @@ def test_main_user_friendly_error_message_for_js_runtime():
 
 def test_report_error_to_archive_includes_js_runtime_error():
     """Verify report_error_to_archive reports the translated Hebrew error to the archive channel."""
-    client = MagicMock()
+    client = PyrogramClientMock()
     user = SimpleNamespace(id=12345678, first_name="Tester", username="testuser")
     url = "https://www.youtube.com/watch?v=oZIF91nmp0k"
     error = ClassifiedDownloadError(
@@ -265,6 +298,160 @@ def test_request_logger_always_writes_to_file_and_redacts_secrets(tmp_path):
     assert "my_key_abc" not in file_content
 
 
+def test_cleanup_request_logs_removes_old_files_and_keeps_young(tmp_path, caplog):
+    """Verify cleanup_request_logs deletes files older than max_days and preserves young files."""
+    now = time.time()
+    old_file1 = tmp_path / "20260101_111_aaa.log"
+    old_file2 = tmp_path / "20260102_222_bbb.log"
+    young_file1 = tmp_path / "20260916_333_ccc.log"
+    young_file2 = tmp_path / "20260917_444_ddd.log"
+
+    for f in (old_file1, old_file2, young_file1, young_file2):
+        f.write_text("dummy request log content")
+
+    # Set mtime explicitly: old files 20 and 30 days ago, young files 1 and 2 days ago
+    os.utime(old_file1, (now - 30 * 86400, now - 30 * 86400))
+    os.utime(old_file2, (now - 20 * 86400, now - 20 * 86400))
+    os.utime(young_file1, (now - 2 * 86400, now - 2 * 86400))
+    os.utime(young_file2, (now - 3600, now - 3600))
+
+    with caplog.at_level(logging.INFO):
+        deleted = cleanup_request_logs(log_dir=tmp_path, max_days=14)
+
+    assert set(deleted) == {old_file1, old_file2}
+    assert not old_file1.exists()
+    assert not old_file2.exists()
+    assert young_file1.exists()
+    assert young_file2.exists()
+
+    # Verify what was deleted and how much was logged
+    assert any("Deleted expired request log" in r.message and "20260101_111_aaa.log" in r.message for r in caplog.records)
+    assert any("Request log cleanup completed" in r.message and "deleted 2 file(s)" in r.message for r in caplog.records)
+
+
+def test_cleanup_request_logs_configurable_via_env_var(tmp_path):
+    """Verify retention days threshold is configurable via REQUEST_LOG_MAX_DAYS environment variable."""
+    now = time.time()
+    file_7d = tmp_path / "20260910_111_aaa.log"
+    file_2d = tmp_path / "20260915_222_bbb.log"
+    file_7d.write_text("7d old")
+    file_2d.write_text("2d old")
+    os.utime(file_7d, (now - 7 * 86400, now - 7 * 86400))
+    os.utime(file_2d, (now - 2 * 86400, now - 2 * 86400))
+
+    with patch.dict(os.environ, {"REQUEST_LOG_DIR": str(tmp_path), "REQUEST_LOG_MAX_DAYS": "5"}):
+        deleted = cleanup_request_logs()
+
+    assert file_7d in deleted
+    assert not file_7d.exists()
+    assert file_2d.exists()
+
+
+def test_cleanup_request_logs_enforces_count_ceiling(tmp_path, caplog):
+    """Verify that when file count exceeds max_files, oldest files are pruned first."""
+    now = time.time()
+    created_files = []
+    for i in range(8):
+        f = tmp_path / f"req_{i:02d}.log"
+        f.write_text(f"log {i}")
+        # Each file is 1 hour newer than previous
+        os.utime(f, (now - (10 - i) * 3600, now - (10 - i) * 3600))
+        created_files.append(f)
+
+    with caplog.at_level(logging.INFO):
+        # Keep only the newest 3 files
+        deleted = cleanup_request_logs(log_dir=tmp_path, max_days=100, max_files=3)
+
+    assert len(deleted) == 5
+    assert set(deleted) == set(created_files[:5])
+    # The 3 newest files must remain
+    for f in created_files[5:]:
+        assert f.exists()
+    # The 5 oldest must be gone
+    for f in created_files[:5]:
+        assert not f.exists()
+
+    assert any("exceeding max_files ceiling" in r.message for r in caplog.records)
+
+
+def test_cleanup_request_logs_enforces_bytes_ceiling(tmp_path, caplog):
+    """Verify that when total size exceeds max_bytes, oldest files are pruned until below ceiling."""
+    now = time.time()
+    f1 = tmp_path / "f1.log"
+    f2 = tmp_path / "f2.log"
+    f3 = tmp_path / "f3.log"
+    f1.write_bytes(b"A" * 1000)
+    f2.write_bytes(b"B" * 1000)
+    f3.write_bytes(b"C" * 1000)
+    os.utime(f1, (now - 300, now - 300))
+    os.utime(f2, (now - 200, now - 200))
+    os.utime(f3, (now - 100, now - 100))
+
+    with caplog.at_level(logging.INFO):
+        # Ceiling 1500 bytes: total is 3000 bytes, so f1 and f2 should be deleted
+        deleted = cleanup_request_logs(log_dir=tmp_path, max_days=100, max_bytes=1500)
+
+    assert f1 in deleted
+    assert f2 in deleted
+    assert not f1.exists()
+    assert not f2.exists()
+    assert f3.exists()
+
+
+def test_cleanup_request_logs_never_touches_bot_log_or_rotated_files(tmp_path):
+    """Verify cleanup strictly avoids deleting bot.log or its rotated files bot.log.1, bot.log.2."""
+    now = time.time()
+    bot_log = tmp_path / "bot.log"
+    bot_log_1 = tmp_path / "bot.log.1"
+    bot_log_2 = tmp_path / "bot.log.2"
+    req_log = tmp_path / "20200101_123_abc.log"
+
+    bot_log.write_text("main bot log")
+    bot_log_1.write_text("rotated bot log 1")
+    bot_log_2.write_text("rotated bot log 2")
+    req_log.write_text("request log")
+
+    # Make all files 200 days old
+    old_ts = now - 200 * 86400
+    for f in (bot_log, bot_log_1, bot_log_2, req_log):
+        os.utime(f, (old_ts, old_ts))
+
+    deleted = cleanup_request_logs(log_dir=tmp_path, max_days=1, max_files=1, max_bytes=1)
+
+    # Protected bot logs must NEVER be touched
+    assert bot_log.exists()
+    assert bot_log_1.exists()
+    assert bot_log_2.exists()
+    assert bot_log not in deleted
+    assert bot_log_1 not in deleted
+    assert bot_log_2 not in deleted
+
+    # The request log must be deleted
+    assert not req_log.exists()
+    assert req_log in deleted
+
+
+def test_end_request_log_automatically_runs_cleanup(tmp_path):
+    """Verify end_request_log automatically triggers cleanup and purges expired logs."""
+    requests_dir = tmp_path / "auto_requests"
+    requests_dir.mkdir()
+
+    old_log = requests_dir / "20200101_999_old.log"
+    old_log.write_text("old expired log")
+    now = time.time()
+    os.utime(old_log, (now - 100 * 86400, now - 100 * 86400))
+
+    with patch.dict(os.environ, {"REQUEST_LOG_DIR": str(requests_dir), "REQUEST_LOG_MAX_DAYS": "10"}):
+        start_request_log("https://example.com/item", 777)
+        logging.info("Request in progress")
+        saved = end_request_log()
+
+    assert saved is not None
+    assert saved.exists()
+    # Expired log must have been cleaned up automatically
+    assert not old_log.exists()
+
+
 # ---------------------------------------------------------------------------
 # Requirement 3: JDownloader Link Filtering (Video + Audio vs Junk)
 # ---------------------------------------------------------------------------
@@ -345,7 +532,7 @@ def test_youtube_download_captures_n_challenge_from_warning():
     """Verify YoutubeDownload._download detects n-challenge warning and classifies error."""
     from engine.generic import YoutubeDownload
 
-    client = MagicMock()
+    client = PyrogramClientMock()
     bot_msg = MagicMock()
     bot_msg.chat.id = 12345
     bot_msg.chat.type = "private"
@@ -390,7 +577,7 @@ def test_youtube_download_stops_format_loop_on_reload_error():
     """Verify format loop breaks immediately on fatal n-challenge / reload error."""
     from engine.generic import YoutubeDownload
 
-    client = MagicMock()
+    client = PyrogramClientMock()
     bot_msg = MagicMock()
     bot_msg.chat.id = 12345
     bot_msg.chat.type = "private"

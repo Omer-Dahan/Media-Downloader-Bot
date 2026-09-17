@@ -415,41 +415,103 @@ class JDownloaderDownload(BaseDownloader):
         final_media: list[Path] = []
 
         if both:
-            logging.info(
-                "Package contains complete media file with video and audio: %s",
-                both[0].name,
-            )
-            final_media = [both[0]]
+            selected = both[0]
+            if len(both) > 1:
+                dropped = [f.name for f in both[1:]]
+                logging.info(
+                    "Package contains %d complete media files. Selected '%s' for upload; dropped remaining: %s",
+                    len(both),
+                    selected.name,
+                    dropped,
+                )
+            else:
+                logging.info(
+                    "Package contains complete media file with video and audio: %s",
+                    selected.name,
+                )
+            other_dropped = [f.name for f in video_only + audio_only]
+            if other_dropped:
+                logging.info(
+                    "Dropping unmerged candidate files in favor of complete file '%s': %s",
+                    selected.name,
+                    other_dropped,
+                )
+            final_media = [selected]
         elif video_only and audio_only:
-            merged = self._merge_video_audio(video_only[0], audio_only[0])
+            selected_video = video_only[0]
+            selected_audio = audio_only[0]
+            if len(video_only) > 1:
+                dropped_v = [f.name for f in video_only[1:]]
+                logging.info(
+                    "Package contains %d video streams. Selected '%s' for merge; dropped remaining: %s",
+                    len(video_only),
+                    selected_video.name,
+                    dropped_v,
+                )
+            if len(audio_only) > 1:
+                dropped_a = [f.name for f in audio_only[1:]]
+                logging.info(
+                    "Package contains %d audio streams. Selected '%s' for merge; dropped remaining: %s",
+                    len(audio_only),
+                    selected_audio.name,
+                    dropped_a,
+                )
+            merged = self._merge_video_audio(selected_video, selected_audio)
             logging.info(
                 "Merged video '%s' and audio '%s' into '%s'",
-                video_only[0].name,
-                audio_only[0].name,
+                selected_video.name,
+                selected_audio.name,
                 merged.name,
             )
             final_media = [merged]
         elif video_only:
+            selected_video = video_only[0]
+            if len(video_only) > 1:
+                dropped_v = [f.name for f in video_only[1:]]
+                logging.info(
+                    "Package contains %d video-only files. Selected '%s' for upload; dropped remaining: %s",
+                    len(video_only),
+                    selected_video.name,
+                    dropped_v,
+                )
             logging.warning(
                 "Package '%s' contains video-only file '%s' without audio stream. Uploading video without sound.",
                 self._package_name or output_path.name,
-                video_only[0].name,
+                selected_video.name,
             )
-            final_media = [video_only[0]]
+            final_media = [selected_video]
         elif audio_only:
+            selected_audio = audio_only[0]
+            if len(audio_only) > 1:
+                dropped_a = [f.name for f in audio_only[1:]]
+                logging.info(
+                    "Package contains %d audio-only files. Selected '%s' for upload; dropped remaining: %s",
+                    len(audio_only),
+                    selected_audio.name,
+                    dropped_a,
+                )
             logging.warning(
                 "Package '%s' contains audio-only file '%s' without video stream. Uploading audio only.",
                 self._package_name or output_path.name,
-                audio_only[0].name,
+                selected_audio.name,
             )
-            final_media = [audio_only[0]]
+            final_media = [selected_audio]
         else:
+            selected_media = media_candidates[0]
+            if len(media_candidates) > 1:
+                dropped_m = [f.name for f in media_candidates[1:]]
+                logging.info(
+                    "Package contains %d unrecognized media files. Selected '%s' for upload; dropped remaining: %s",
+                    len(media_candidates),
+                    selected_media.name,
+                    dropped_m,
+                )
             logging.warning(
                 "Package '%s': No standard audio/video streams recognized in files: %s",
                 self._package_name or output_path.name,
                 [f.name for f in media_candidates],
             )
-            final_media = [media_candidates[0]]
+            final_media = [selected_media]
 
         upload_list = final_media + subtitle_files
         logging.info(
