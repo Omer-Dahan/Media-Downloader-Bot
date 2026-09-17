@@ -836,7 +836,7 @@ class YoutubeDownload(BaseDownloader):
             # try add extract_args if present
             if potoken := os.getenv("POTOKEN"):
                 ydl_opts["extractor_args"] = {
-                    "youtube": ["player-client=web,default", f"po_token=web+{potoken}"]
+                    "youtube": ["player_client=web,default", f"po_token=web+{potoken}"]
                 }
                 # for new version? https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide
                 # ydl_opts["extractor_args"] = {
@@ -845,7 +845,7 @@ class YoutubeDownload(BaseDownloader):
             else:
                 # Use web client - android client has been blocked by Google.
                 # The updated yt-dlp handles the 'n' challenge natively for web client.
-                ydl_opts["extractor_args"] = {"youtube": ["player-client=web,default"]}
+                ydl_opts["extractor_args"] = {"youtube": ["player_client=web,default"]}
         else:
             # For non-YouTube sites, use impersonate to bypass Cloudflare and other anti-bot measures
             # This requires curl_cffi to be installed (yt-dlp[curl-cffi])
