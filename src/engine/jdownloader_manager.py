@@ -206,11 +206,37 @@ class JDownloaderManager:
         ".m3u8",
     )
 
-    # Known non-media extensions to always reject
+    # Audio file extensions to keep (e.g. YouTube separate audio streams)
+    AUDIO_EXTENSIONS = (
+        ".m4a",
+        ".opus",
+        ".ogg",
+        ".weba",
+        ".mp3",
+        ".aac",
+        ".flac",
+        ".wav",
+        ".wma",
+    )
+
+    MEDIA_EXTENSIONS = VIDEO_EXTENSIONS + AUDIO_EXTENSIONS
+
+    # Known non-media extensions to always reject as junk
     JUNK_EXTENSIONS = (
-        ".webmanifest",
         ".html",
         ".htm",
+        ".json",
+        ".xml",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".gif",
+        ".srt",
+        ".vtt",
+        ".torrent",
+        ".part",
+        ".webmanifest",
         ".css",
         ".js",
         ".woff",
@@ -221,6 +247,8 @@ class JDownloaderManager:
         ".php",
         ".asp",
         ".jsp",
+        ".txt",
+        ".nfo",
     )
 
     def add_link(self, url: str, user_id: int) -> tuple[int, str]:
@@ -324,8 +352,9 @@ class JDownloaderManager:
 
     def _filter_video_links_in_package(self, package_id: int) -> None:
         """
-        Remove all non-video links from a linkgrabber package.
-        This ensures JDownloader only downloads video files.
+        Remove junk links from a linkgrabber package while keeping media (video and audio).
+        Ensures components like separate audio tracks for YouTube are retained,
+        while only obvious junk (html, json, xml, jpg, png, srt, vtt, torrent, part) is removed.
         """
         try:
             links = self._device.linkgrabber.query_links(
@@ -340,75 +369,38 @@ class JDownloaderManager:
             if not links:
                 return  # nothing to filter
 
-            links_to_remove = [
-                lnk.get("uuid")
-                for lnk in links
-                if lnk.get("uuid") and not self._is_video_link(lnk)
+            # Find obvious junk links to remove
+            junk_links = [
+                lnk for lnk in links
+                if lnk.get("uuid") and self._is_junk_link(lnk)
             ]
 
-            remaining = len(links) - len(links_to_remove)
-
-            if remaining == 0:
-                # No recognised video links — but before letting everything through,
-                # remove known junk files (manifest, json, html, etc.)
-                junk_to_remove = [
-                    lnk.get("uuid")
-                    for lnk in links
-                    if lnk.get("uuid") and self._is_junk_link(lnk)
-                ]
-
-                if junk_to_remove:
+            if junk_links:
+                for lnk in junk_links:
                     logging.info(
-                        "No video links found — removing %d junk links from JD package %s",
-                        len(junk_to_remove),
+                        "Removing junk link from JD package %s: name='%s', url='%s' (uuid=%s)",
                         package_id,
+                        lnk.get("name", "?"),
+                        lnk.get("url", "?"),
+                        lnk.get("uuid"),
                     )
-                    self._device.linkgrabber.remove_links(
-                        link_ids=junk_to_remove,
-                        package_ids=[],
-                    )
-
-                surviving = len(links) - len(junk_to_remove)
-                if surviving == 0:
-                    raise JDownloaderError(
-                        "לא נמצאו קבצים מוכרים בקישור. "
-                        "JDownloader מצא תוכן אך ללא פורמט נתמך."
-                    )
-
-                names = [
-                    lnk.get("name", "?")
-                    for lnk in links
-                    if lnk.get("uuid") not in junk_to_remove
-                ]
-                logging.warning(
-                    "No video-extension links found in JD package %s — kept %d non-junk links. "
-                    "Link names: %s",
-                    package_id,
-                    surviving,
-                    names,
-                )
-                return
-
-            if links_to_remove:
-                logging.info(
-                    "Removing %d non-video links from JD package %s",
-                    len(links_to_remove),
-                    package_id,
-                )
                 self._device.linkgrabber.remove_links(
-                    link_ids=links_to_remove,
+                    link_ids=[lnk.get("uuid") for lnk in junk_links],
                     package_ids=[],
                 )
 
-            remaining = len(links) - len(links_to_remove)
-            if remaining == 0:
+            remaining_links = [lnk for lnk in links if lnk not in junk_links]
+            if not remaining_links:
                 raise JDownloaderError(
                     "לא נמצאו קבצים מוכרים בקישור. "
                     "JDownloader מצא תוכן אך ללא פורמט נתמך."
                 )
 
             logging.info(
-                "%d video link(s) kept in JD package %s", remaining, package_id
+                "%d media/valid link(s) kept in JD package %s (names: %s)",
+                len(remaining_links),
+                package_id,
+                [lnk.get("name", "?") for lnk in remaining_links],
             )
 
         except JDownloaderError:
@@ -422,15 +414,30 @@ class JDownloaderManager:
     @classmethod
     def _is_video_link(cls, link: dict) -> bool:
         """Return True if a linkgrabber link looks like a video file."""
-        name = (link.get("name") or "").lower()
-        url = (link.get("url") or "").lower()
-        return any(name.endswith(ext) or ext in url for ext in cls.VIDEO_EXTENSIONS)
+        name = (link.get("name") or "").lower().split("?")[0]
+        url = (link.get("url") or "").lower().split("?")[0]
+        return any(name.endswith(ext) or url.endswith(ext) for ext in cls.VIDEO_EXTENSIONS)
+
+    @classmethod
+    def _is_audio_link(cls, link: dict) -> bool:
+        """Return True if a linkgrabber link looks like an audio file."""
+        name = (link.get("name") or "").lower().split("?")[0]
+        url = (link.get("url") or "").lower().split("?")[0]
+        return any(name.endswith(ext) or url.endswith(ext) for ext in cls.AUDIO_EXTENSIONS)
+
+    @classmethod
+    def _is_media_link(cls, link: dict) -> bool:
+        """Return True if a linkgrabber link looks like a media file (video or audio)."""
+        name = (link.get("name") or "").lower().split("?")[0]
+        url = (link.get("url") or "").lower().split("?")[0]
+        return any(name.endswith(ext) or url.endswith(ext) for ext in cls.MEDIA_EXTENSIONS)
 
     @classmethod
     def _is_junk_link(cls, link: dict) -> bool:
         """Return True if a linkgrabber link is a known junk/non-media file."""
-        name = (link.get("name") or "").lower()
-        return any(name.endswith(ext) for ext in cls.JUNK_EXTENSIONS)
+        name = (link.get("name") or "").lower().split("?")[0]
+        url = (link.get("url") or "").lower().split("?")[0]
+        return any(name.endswith(ext) or url.endswith(ext) for ext in cls.JUNK_EXTENSIONS)
 
     def get_status(self, package_name: str) -> dict[str, Any]:
         """

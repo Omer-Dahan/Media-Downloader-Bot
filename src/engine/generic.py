@@ -1,3 +1,4 @@
+from typing import Any
 import logging
 import os
 import subprocess
@@ -31,29 +32,121 @@ _ytdlp_update_attempted = False
 UPDATE_FLAG_FILE = _SCRIPT_DIR / ".ytdlp_updated"
 
 
-def _ensure_node_in_path():
-    """Ensure Node.js is in PATH for yt-dlp."""
+def check_and_ensure_js_runtime() -> dict[str, Any]:
+    """
+    Check if a supported JavaScript runtime (node, deno, quickjs/qjs, bun) is available for yt-dlp.
+    Augments PATH with common installation directories (~/.local/bin, /usr/local/bin, ~/.deno/bin, etc.)
+    and logs a detailed warning if no supported runtime is found.
+    """
     import shutil
 
-    # Check if node is already available
-    if shutil.which("node"):
-        return
-
-    # Check common Windows install location (Windows only)
+    # Check common search paths used on Linux servers and user installations
+    common_search_dirs = [
+        Path(os.path.expanduser("~/.local/bin")),
+        Path("/usr/local/bin"),
+        Path(os.path.expanduser("~/.deno/bin")),
+        Path(os.path.expanduser("~/.bun/bin")),
+        Path(os.path.expanduser("~/.nvm/current/bin")),
+    ]
     if sys.platform == "win32":
-        node_path = Path(r"C:\Program Files\nodejs")
-        if node_path.exists() and (node_path / "node.exe").exists():
-            logging.info("Found Node.js at %s, adding to PATH for yt-dlp", node_path)
-            os.environ["PATH"] += os.pathsep + str(node_path)
-            return
+        common_search_dirs.extend([
+            Path(r"C:\Program Files\nodejs"),
+            Path(r"C:\Program Files (x86)\nodejs"),
+        ])
+
+    current_path_entries = set(os.environ.get("PATH", "").split(os.pathsep))
+    added_dirs = []
+    for d in common_search_dirs:
+        if d.exists() and d.is_dir() and str(d) not in current_path_entries:
+            os.environ["PATH"] = str(d) + os.pathsep + os.environ.get("PATH", "")
+            current_path_entries.add(str(d))
+            added_dirs.append(str(d))
+
+    if added_dirs:
+        logging.info("Augmented PATH with common tool directories: %s", added_dirs)
+
+    # Check runtimes using yt-dlp internal jsruntime detection
+    candidates = []
+    try:
+        from yt_dlp.utils._jsruntime import (
+            DenoJsRuntime,
+            NodeJsRuntime,
+            BunJsRuntime,
+            QuickJsRuntime,
+        )
+        candidates = [
+            ("node", NodeJsRuntime()),
+            ("deno", DenoJsRuntime()),
+            ("quickjs", QuickJsRuntime()),
+            ("bun", BunJsRuntime()),
+        ]
+    except Exception as e:
+        logging.debug("Could not import yt-dlp _jsruntime classes: %s", e)
+
+    supported_runtimes = []
+    unsupported_runtimes = []
+
+    for name, r in candidates:
+        try:
+            info = r.info
+            if info:
+                if info.supported:
+                    supported_runtimes.append(info)
+                else:
+                    unsupported_runtimes.append(info)
+        except Exception:
+            pass
+
+    # Fallback to shutil.which if _jsruntime failed
+    if not supported_runtimes and not unsupported_runtimes:
+        for bin_name in ("node", "deno", "qjs", "quickjs", "bun"):
+            found_path = shutil.which(bin_name)
+            if found_path:
+                logging.info("Found JavaScript runtime binary at %s", found_path)
+                return {"status": "ok", "path": found_path}
+
+    if supported_runtimes:
+        best = supported_runtimes[0]
+        logging.info(
+            "Found supported JavaScript runtime for yt-dlp: %s (version: %s, path: %s)",
+            best.name,
+            best.version,
+            best.path,
+        )
+        return {"status": "ok", "runtime": best}
+
+    if unsupported_runtimes:
+        first_unsupp = unsupported_runtimes[0]
+        logging.warning(
+            "JavaScript runtime '%s' found at %s (version %s), but this version is not supported "
+            "by yt-dlp. YouTube downloads may fail with 'The page needs to be reloaded'. "
+            "Please upgrade Node.js (>= 22.0.0) or Deno (>= 2.3.0).",
+            first_unsupp.name,
+            first_unsupp.path,
+            first_unsupp.version,
+        )
+        return {"status": "unsupported", "runtime": first_unsupp}
 
     logging.warning(
-        "Node.js not found in PATH. YouTube downloads might be slower or fail."
+        "No supported JavaScript runtime found in PATH or common search paths. "
+        "Checked: deno, node, quickjs (qjs), bun. "
+        "Search paths checked: %s. "
+        "yt-dlp requires a JavaScript runtime (such as Node.js >= 22.0.0 or Deno >= 2.3.0) "
+        "to solve YouTube n-challenge signatures. Without it, YouTube downloads will fail with "
+        "'The page needs to be reloaded'. Please install Node.js or Deno on the server "
+        "and ensure it is accessible in PATH.",
+        [str(d) for d in common_search_dirs],
     )
+    return {"status": "missing", "runtime": None}
+
+
+def _ensure_node_in_path():
+    """Backwards-compatible wrapper for check_and_ensure_js_runtime."""
+    return check_and_ensure_js_runtime()
 
 
 # Run this check immediately when module loads
-_ensure_node_in_path()
+check_and_ensure_js_runtime()
 
 
 def get_ytdlp_version() -> str:
@@ -398,6 +491,20 @@ def classify_download_error(error_msg: str | None, url: str = "") -> ClassifiedM
         return ClassifiedMessage("ההורדה נכשלה: לא התקבל קובץ מדיה.", is_safe=True)
 
     err_lower = error_msg.lower()
+
+    # YouTube JavaScript runtime / n-challenge solver missing
+    if any(k in err_lower for k in [
+        "the page needs to be reloaded",
+        "n challenge solving failed",
+        "challenge solver script",
+        "supported javascript runtime",
+        "signature solving failed",
+    ]):
+        return ClassifiedMessage(
+            "שגיאת פענוח ביוטיוב: חסר בשרת runtime של JavaScript (כגון Node.js או Deno) הנדרש לפענוח חתימות יוטיוב (n challenge solver).\n"
+            "יש להתקין בשרת Node.js (גרסה 22 ומעלה) או Deno.",
+            is_safe=True,
+        )
 
     # Bot detection / Captcha / Sign-in required
     if any(k in err_lower for k in [
@@ -858,16 +965,37 @@ class YoutubeDownload(BaseDownloader):
                     "has been removed",
                     "not available in your country",
                     "geographic restriction",
+                    "the page needs to be reloaded",
+                    "n challenge solving failed",
+                    "challenge solver script",
+                    "supported javascript runtime",
                 ]):
                     logging.warning("Encountered fatal non-format error: %s, stopping format attempts", last_error)
                     break
                 continue
 
+        # Scan yt-dlp warnings and errors to detect n-challenge / JS runtime failures
+        all_yt_msgs = (yt_logger.errors or []) + (yt_logger.warnings or [])
+        if self._last_download_error:
+            all_yt_msgs.append(self._last_download_error)
+        n_challenge_detected = False
+        for msg in all_yt_msgs:
+            m_lower = str(msg).lower()
+            if any(k in m_lower for k in [
+                "the page needs to be reloaded",
+                "n challenge solving failed",
+                "challenge solver script",
+                "supported javascript runtime",
+            ]):
+                n_challenge_detected = True
+                self._last_download_error = str(msg)
+                break
+
         # If all formats failed due to extraction error, try auto-updating yt-dlp
         if not files and not self._last_download_error and yt_logger.errors:
             self._last_download_error = yt_logger.errors[-1]
 
-        if not files and extraction_error_encountered and not _retry_after_update:
+        if not files and extraction_error_encountered and not _retry_after_update and not n_challenge_detected:
             logging.info("Extraction error detected, attempting yt-dlp auto-update...")
             if try_update_ytdlp():
                 logging.info("Retrying download after yt-dlp update...")

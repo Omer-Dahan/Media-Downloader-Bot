@@ -64,7 +64,7 @@ from engine import (
 )
 from engine.base import cancellation_events, _resume_state_cache
 from engine.concurrency import concurrency_manager
-from engine.generic import check_and_send_update_notification, auto_update_ytdlp, is_playlist_url, ClassifiedDownloadError
+from engine.generic import check_and_send_update_notification, auto_update_ytdlp, is_playlist_url, ClassifiedDownloadError, check_and_ensure_js_runtime
 from utils import (
     extract_url_and_name,
     is_youtube,
@@ -519,6 +519,10 @@ KNOWN_SAFE_SUBSTRINGS = (
     "הפורמט המבוקש אינו זמין",
     "ההורדה בוטלה",
     "שגיאה בחילוץ המידע",
+    "runtime של JavaScript",
+    "חתימות יוטיוב",
+    "Node.js",
+    "n challenge",
 )
 
 
@@ -715,7 +719,7 @@ def download_handler(client: Client, message: types.Message):
                 try:
                     youtube_entrance(client, bot_msg, url)
                 except Exception as ytdlp_e:
-                    # Last resort — try JDownloader2
+                    # Last resort - try JDownloader2
                     logging.info(
                         "yt-dlp failed for %s, trying JDownloader2: %s", url, ytdlp_e
                     )
@@ -1236,6 +1240,12 @@ By @BennyThink, VIP Mode: {ENABLE_VIP}
             check_and_send_update_notification(app)
         except Exception as e:
             logging.error("Failed to send update notification: %s", e)
+
+        # Check JavaScript runtime for yt-dlp
+        try:
+            check_and_ensure_js_runtime()
+        except Exception as e:
+            logging.warning("⚠️ JavaScript runtime check failed: %s", e)
 
         # Check JDownloader2 connection
         try:

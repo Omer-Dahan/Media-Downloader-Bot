@@ -50,6 +50,12 @@ def _parse_channel_id(val):
 
 ARCHIVE_CHANNEL = _parse_channel_id(get_env("ARCHIVE_CHANNEL"))  # Channel to forward downloads to (int ID or str username)
 
+# Logging settings
+LOG_FILE = get_env("LOG_FILE", "logs/bot.log")
+LOG_MAX_BYTES = get_env("LOG_MAX_BYTES", 10 * 1024 * 1024)
+LOG_BACKUP_COUNT = get_env("LOG_BACKUP_COUNT", 5)
+REQUEST_LOG_DIR = get_env("REQUEST_LOG_DIR", "logs/requests")
+
 
 # For advance users
 # Please do not change, if you don't know what these are.
